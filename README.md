@@ -1,4 +1,4 @@
-# UFO Core
+# RaishxCore
 
 Reusable NeoForge 1.21.1 foundation for AE2-oriented addons.
 

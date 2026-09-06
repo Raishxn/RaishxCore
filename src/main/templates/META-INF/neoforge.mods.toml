@@ -26,7 +26,7 @@ side="BOTH"
 [[dependencies.${mod_id}]]
 modId="ae2"
 type="required"
-reason="UFO Core provides reusable AE2-oriented infrastructure and widgets."
+reason="RaishxCore provides reusable AE2-oriented infrastructure and widgets."
 versionRange="${ae2_version_range}"
 ordering="AFTER"
 side="BOTH"
