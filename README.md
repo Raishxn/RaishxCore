@@ -18,6 +18,6 @@ API 1.0. The Core contains infrastructure only; blocks, recipes and progression
 belong to consuming addons.
 
 Build with `./gradlew build`. UFO Future consumes this project through a Gradle
-composite build during development and declares `ufocore` as a required mod.
+composite build during development and declares `raishxcore` as a required mod.
 See [docs/consumer-integration.md](docs/consumer-integration.md) for the exact
 development and release setup.
