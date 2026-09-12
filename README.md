@@ -17,7 +17,13 @@ client adapters deliberately live outside that package and may evolve until
 API 1.0. The Core contains infrastructure only; blocks, recipes and progression
 belong to consuming addons.
 
-Build with `./gradlew build`. UFO Future consumes this project through a Gradle
+Currently consumed by UFO Future: the port contracts (`api.port`), crafting
+capacity and shared CPU pool (`api.crafting`), the AE2 planner integration
+(replaces AE2's planner; kill-switch in `config/raishxcore/core.toml`), the
+guarded machine action/network contract and the reusable GUI widgets. The
+`api.amount`, `api.multiblock`, `api.transaction` and `api.tier` domains are
+**experimental**: implemented and tested, but no consumer uses them yet, so
+their contracts may still change.
 composite build during development and declares `raishxcore` as a required mod.
 See [docs/consumer-integration.md](docs/consumer-integration.md) for the exact
 development and release setup.

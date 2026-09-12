@@ -60,6 +60,11 @@ tasks.named('test', Test).configure {
 
 // Opt-in benchmarks: never bundled into the mod or run by the normal test/build tasks.
 sourceSets {
+    test {
+        // Unit tests may exercise main classes that touch NeoForge/AE2 types.
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+    }
     gameTest {
         compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
         runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath

@@ -30,6 +30,12 @@ public abstract class CoreCraftingPlannerServiceMixin implements PlannerGridServ
     private void raishxcore$planFromSnapshot(Level level, ICraftingSimulationRequester requester,
                                             AEKey target, long amount, CalculationStrategy strategy,
                                             CallbackInfoReturnable<Future<ICraftingPlan>> cir) {
+        if (!com.raishxn.ufocore.CoreConfig.isPlannerEnabled()) {
+            // Kill-switch: leave AE2's own planner in charge of this request entirely.
+            if (raishxcore$planner == null) raishxcore$planner = new Ae2PlannerBridge();
+            raishxcore$planner.recordDisabled();
+            return;
+        }
         if (raishxcore$planner == null) raishxcore$planner = new Ae2PlannerBridge();
         long revision = ((PlannerRevisionSource) craftingProviders).raishxcore$getPatternRevision();
         Future<ICraftingPlan> result = raishxcore$planner.begin(level, grid, requester, target, amount, strategy, revision);

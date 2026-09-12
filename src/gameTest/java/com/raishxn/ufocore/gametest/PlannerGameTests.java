@@ -85,7 +85,7 @@ public final class PlannerGameTests {
         });
     }
 
-    private static final class Fixture {
+    static final class Fixture {
         final GameTestHelper helper;
         final IManagedGridNode managed;
         final IGrid grid;
@@ -111,8 +111,20 @@ public final class PlannerGameTests {
             return PatternDetailsHelper.decodePattern(PatternDetailsHelper.encodeProcessingPattern(
                     List.of(new GenericStack(raw, input)), List.of(new GenericStack(product, 1))), helper.getLevel());
         }
+        void addPattern(IPatternDetails pattern) {
+            provider.patterns.add(pattern);
+        }
+
+        void register() {
+            grid.getCraftingService().addGlobalCraftingProvider(provider);
+        }
+
         Future<ICraftingPlan> request(long amount, CalculationStrategy strategy) {
-            return grid.getCraftingService().beginCraftingCalculation(helper.getLevel(), requester, product, amount, strategy);
+            return request(product, amount, strategy);
+        }
+
+        Future<ICraftingPlan> request(AEItemKey what, long amount, CalculationStrategy strategy) {
+            return grid.getCraftingService().beginCraftingCalculation(helper.getLevel(), requester, what, amount, strategy);
         }
         com.raishxn.ufocore.neoforge.crafting.Ae2PlannerBridge.Diagnostics diagnostics() {
             return ((PlannerGridService) grid.getCraftingService()).raishxcore$getPlannerDiagnostics();

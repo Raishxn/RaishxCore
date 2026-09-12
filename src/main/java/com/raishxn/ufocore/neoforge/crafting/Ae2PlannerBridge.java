@@ -9,6 +9,7 @@ import appeng.api.stacks.AEKey;
 import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
 import appeng.crafting.CraftingPlan;
+import com.mojang.logging.LogUtils;
 import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.api.crafting.planner.IterativeCraftingPlanner;
 import com.raishxn.ufocore.api.crafting.planner.PlanningCancellation;
@@ -28,9 +29,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
 
 /** Per-grid revision cache and bounded worker queue. No world/storage calls run on a worker. */
 public final class Ae2PlannerBridge {
+    private static final Logger LOG = LogUtils.getLogger();
     private static final long TIMEOUT_NANOS = Duration.ofSeconds(2).toNanos();
     private static final ThreadPoolExecutor WORKERS = new ThreadPoolExecutor(2, 2, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32), runnable -> {
@@ -82,7 +85,23 @@ public final class Ae2PlannerBridge {
         var captured = snapshot;
         var capturedStock = Map.copyOf(stock);
         try {
-            return WORKERS.submit(() -> calculate(captured, capturedStock, amount, strategy));
+            return WORKERS.submit(() -> {
+                try {
+                    return calculate(captured, capturedStock, amount, strategy);
+                } catch (java.util.concurrent.CancellationException cancelled) {
+                    lastStatus = "cancelled";
+                    throw cancelled;
+                } catch (TimeoutException deadline) {
+                    lastStatus = "timeout";
+                    throw new IllegalStateException("RaishxCore planning deadline exceeded", deadline);
+                } catch (RuntimeException unexpected) {
+                    // AE2 menus surface the thrown cause to the player; this log is the
+                    // structured trace for the addon maintainers.
+                    lastStatus = "failed: " + unexpected;
+                    LOG.warn("RaishxCore planning failed unexpectedly.", unexpected);
+                    throw unexpected;
+                }
+            });
         } catch (RejectedExecutionException busy) {
             lastStatus = "ae2: planner queue full";
             return null;
@@ -161,6 +180,12 @@ public final class Ae2PlannerBridge {
         return new CraftingPlan(new GenericStack(snapshot.keys().get(plan.target()), plan.requested().longValueExact()),
                 bytes.longValueExact(), !plan.complete(), snapshot.multiplePaths(), used, new KeyCounter(), missing,
                 Map.copyOf(times));
+    }
+
+    /** Records that this request was declined by the config kill-switch. */
+    public void recordDisabled() {
+        lastStatus = "disabled";
+        lastDiagnostics = null;
     }
 
     public Diagnostics diagnostics() { return new Diagnostics(revision, hits, misses, lastStatus, lastDiagnostics); }
