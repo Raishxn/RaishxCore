@@ -11,3 +11,4 @@ runs/
 *.launch
 eclipse/
 
+logs/
