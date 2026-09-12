@@ -4,6 +4,7 @@ import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.api.crafting.planner.ImmutableCraftingGraph.CompiledPattern;
 import com.raishxn.ufocore.api.crafting.planner.ImmutableCraftingGraph.PatternEntry;
 import java.math.BigInteger;
+import java.io.Serial;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -305,6 +306,7 @@ public final class IterativeCraftingPlanner<K> {
         }
     }
     private static final class PlanningHalt extends RuntimeException {
+        @Serial private static final long serialVersionUID = 1L;
         final PlanningResult.Status status;
         PlanningHalt(PlanningResult.Status status) { super(null, null, false, false); this.status = status; }
     }

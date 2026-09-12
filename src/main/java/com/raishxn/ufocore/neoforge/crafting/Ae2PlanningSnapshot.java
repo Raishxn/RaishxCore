@@ -8,6 +8,7 @@ import appeng.me.service.CraftingService;
 import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.api.crafting.planner.CraftingPattern;
 import com.raishxn.ufocore.api.crafting.planner.ImmutableCraftingGraph;
+import java.io.Serial;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -147,6 +148,7 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
     }
 
     public static final class Declined extends RuntimeException {
+        @Serial private static final long serialVersionUID = 1L;
         Declined(String reason) { super(reason, null, false, false); }
     }
 }
