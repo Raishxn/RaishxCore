@@ -13,8 +13,8 @@ class CoreMetadataContractTest {
         try (InputStream stream = CoreMetadataContractTest.class.getResourceAsStream(
                 "/META-INF/neoforge.mods.toml")) {
             String metadata = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-            assertTrue(metadata.contains("modId=\"ufocore\""));
-            assertTrue(metadata.contains("version=\"0.1.0-alpha.1\""));
+            assertTrue(metadata.contains("modId=\"raishxcore\""));
+            assertTrue(metadata.contains("version=\"0.1.0-alpha.2\""));
             assertTrue(metadata.contains("modId=\"ae2\""));
             assertTrue(metadata.contains("versionRange=\"[19.2.17,20)\""));
         }

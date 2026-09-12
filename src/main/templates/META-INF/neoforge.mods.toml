@@ -16,6 +16,9 @@ versionRange="[${neo_version},)"
 ordering="NONE"
 side="BOTH"
 
+[[mixins]]
+config="raishxcore.mixins.json"
+
 [[dependencies.${mod_id}]]
 modId="minecraft"
 type="required"

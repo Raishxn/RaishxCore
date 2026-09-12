@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "com.raishxn.ufocore.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "SharedCraftingCpuServiceMixin",
+    "CraftingPatternRevisionMixin",
+    "CoreCraftingPlannerServiceMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

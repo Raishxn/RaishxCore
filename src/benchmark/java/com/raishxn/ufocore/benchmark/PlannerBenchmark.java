@@ -1,0 +1,186 @@
+package com.raishxn.ufocore.benchmark;
+
+import com.raishxn.ufocore.api.amount.UfoAmount;
+import com.raishxn.ufocore.api.crafting.planner.*;
+import java.lang.management.ManagementFactory;
+import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.*;
+import java.util.function.Supplier;
+
+/** Reproducible microbenchmark and semantic replay; not an in-world TPS benchmark. */
+public final class PlannerBenchmark {
+    private static final int WARMUP = 10;
+    private static final int SAMPLES = 25;
+    private static volatile Object blackhole;
+    private static final PlanningLimits LIMITS = new PlanningLimits(10_000_000, 100_000, Duration.ofSeconds(2), 128);
+
+    public record Scenario(String name, List<CraftingPattern<String>> patterns, String target, UfoAmount amount,
+                            Map<String, UfoAmount> stock, boolean expectedComplete) {}
+    public record Outcome(String status, boolean complete, Map<String, UfoAmount> runs,
+                           Map<String, UfoAmount> stock, Map<String, UfoAmount> missing) {}
+    public interface Reference {
+        Supplier<Outcome> prepare(Scenario scenario, boolean cold);
+    }
+
+    public static void main(String[] args) throws Exception {
+        Locale.setDefault(Locale.ROOT);
+        var bean = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        if (bean.isThreadAllocatedMemorySupported() && !bean.isThreadAllocatedMemoryEnabled()) {
+            bean.setThreadAllocatedMemoryEnabled(true);
+        }
+        Reference reference = args.length > 1 ? (Reference) Class.forName(
+                "com.raishxn.ufocore.benchmark.ThunderboltReference").getConstructor().newInstance() : null;
+        List<String> rows = new ArrayList<>();
+        rows.add("engine,scenario,phase,patterns,p50_us,p95_us,allocated_bytes_per_op,status,valid,expected_complete,executions,used_units,missing_units,surplus_units");
+        for (Scenario scenario : scenarios()) {
+            for (boolean cold : new boolean[]{false, true}) {
+                String phase = cold ? "graph_and_plan" : "cached_graph_plan";
+                rows.add(measure("RaishxCore", scenario, phase, core(scenario, cold), bean));
+                if (reference != null && scenario.amount().bitLength() < 63
+                        && scenario.stock().values().stream().allMatch(value -> value.bitLength() < 63)) {
+                    rows.add(measure("ThunderboltV2", scenario, phase, reference.prepare(scenario, cold), bean));
+                }
+            }
+        }
+        Path output = Path.of(args[0]);
+        Files.createDirectories(output.getParent());
+        Files.write(output, rows);
+        System.out.println("JAVA=" + System.getProperty("java.version") + " VM=" + System.getProperty("java.vm.name")
+                + " OS=" + System.getProperty("os.name") + " ARCH=" + System.getProperty("os.arch")
+                + " CPUS=" + Runtime.getRuntime().availableProcessors() + " warmup=" + WARMUP + " samples=" + SAMPLES);
+        System.out.println("CSV=" + output.toAbsolutePath());
+    }
+
+    private static String measure(String engine, Scenario scenario, String phase, Supplier<Outcome> operation,
+                                   com.sun.management.ThreadMXBean bean) {
+        for (int i = 0; i < WARMUP; i++) blackhole = operation.get();
+        long thread = Thread.currentThread().threadId();
+        long[] nanos = new long[SAMPLES];
+        long allocated = 0;
+        Outcome result = null;
+        for (int i = 0; i < SAMPLES; i++) {
+            long beforeBytes = bean.isThreadAllocatedMemorySupported() ? bean.getThreadAllocatedBytes(thread) : -1;
+            long before = System.nanoTime();
+            result = operation.get();
+            nanos[i] = System.nanoTime() - before;
+            long afterBytes = bean.isThreadAllocatedMemorySupported() ? bean.getThreadAllocatedBytes(thread) : -1;
+            if (beforeBytes >= 0) allocated += afterBytes - beforeBytes;
+            blackhole = result;
+        }
+        Arrays.sort(nanos);
+        var replay = replay(scenario, result);
+        String row = String.format(Locale.ROOT, "%s,%s,%s,%d,%.3f,%.3f,%d,%s,%s,%s,%s,%s,%s,%s",
+                engine, scenario.name(), phase, scenario.patterns().size(), nanos[SAMPLES / 2] / 1000.0,
+                nanos[(int) Math.ceil(SAMPLES * .95) - 1] / 1000.0,
+                bean.isThreadAllocatedMemorySupported() ? allocated / SAMPLES : -1,
+                result.status(), replay.valid, scenario.expectedComplete(), sum(result.runs()),
+                sum(result.stock()), sum(result.missing()), replay.surplus);
+        System.out.println(row);
+        return row;
+    }
+
+    private static Supplier<Outcome> core(Scenario scenario, boolean cold) {
+        var graph = ImmutableCraftingGraph.create(1, Comparator.naturalOrder(), scenario.patterns());
+        var request = new PlanningRequest<>(scenario.target(), scenario.amount(), scenario.stock(), LIMITS,
+                PlanningCancellation.NEVER);
+        return () -> {
+            var selected = cold ? ImmutableCraftingGraph.create(1, Comparator.naturalOrder(), scenario.patterns()) : graph;
+            var result = new IterativeCraftingPlanner<String>().plan(selected, request);
+            Map<String, UfoAmount> runs = new TreeMap<>();
+            result.plan().patternExecutions().forEach((pattern, amount) -> runs.put(pattern.id(), amount));
+            return new Outcome(result.status().name(), result.status() == PlanningResult.Status.COMPLETE,
+                    runs, result.plan().extractedFromInventory(), result.plan().missing());
+        };
+    }
+
+    /** Independently replay the firing vector and verify stock, shortage and output conservation. */
+    private static Replay replay(Scenario scenario, Outcome plan) {
+        Map<String, UfoAmount> pool = new HashMap<>(plan.stock());
+        for (var entry : plan.stock().entrySet()) {
+            if (entry.getValue().compareTo(scenario.stock().getOrDefault(entry.getKey(), UfoAmount.ZERO)) > 0) {
+                return new Replay(false, UfoAmount.ZERO);
+            }
+        }
+        plan.missing().forEach((key, amount) -> pool.merge(key, amount, UfoAmount::add));
+        Map<String, UfoAmount> remaining = new HashMap<>(plan.runs());
+        boolean changed;
+        do {
+            changed = false;
+            for (CraftingPattern<String> pattern : scenario.patterns()) {
+                UfoAmount runs = remaining.get(pattern.id());
+                if (runs == null) continue;
+                boolean available = pattern.inputs().entrySet().stream().allMatch(entry ->
+                        pool.getOrDefault(entry.getKey(), UfoAmount.ZERO).compareTo(
+                                entry.getValue().multiply(runs.asBigInteger())) >= 0);
+                if (!available) continue;
+                pattern.inputs().forEach((key, value) ->
+                        pool.put(key, pool.get(key).subtract(value.multiply(runs.asBigInteger()))));
+                pattern.outputs().forEach((key, value) ->
+                        pool.merge(key, value.multiply(runs.asBigInteger()), UfoAmount::add));
+                remaining.remove(pattern.id());
+                changed = true;
+            }
+        } while (changed && !remaining.isEmpty());
+        UfoAmount target = pool.getOrDefault(scenario.target(), UfoAmount.ZERO);
+        boolean valid = remaining.isEmpty() && target.compareTo(scenario.amount()) >= 0
+                && plan.complete() == scenario.expectedComplete() && (plan.complete() == plan.missing().isEmpty());
+        pool.put(scenario.target(), target.subtractClamped(scenario.amount()));
+        return new Replay(valid, sum(pool));
+    }
+    private record Replay(boolean valid, UfoAmount surplus) {}
+    private static UfoAmount sum(Map<?, UfoAmount> values) {
+        return values.values().stream().reduce(UfoAmount.ZERO, UfoAmount::add);
+    }
+
+    public static List<Scenario> scenarios() {
+        List<Scenario> cases = new ArrayList<>();
+        cases.add(chain(2048, UfoAmount.of(1000), false));
+        cases.add(chain(20_000, UfoAmount.ONE, false));
+        cases.add(chain(32, UfoAmount.of(1000), true));
+        cases.add(chain(256, UfoAmount.of(BigInteger.TEN.pow(30)), false));
+        List<CraftingPattern<String>> fibonacci = new ArrayList<>();
+        fibonacci.add(pattern("p00001", "k1", 1, Map.of("k0", 1L)));
+        for (int i = 2; i <= 32; i++) fibonacci.add(pattern(String.format("p%05d", i), "k" + i, 1,
+                Map.of("k" + (i - 1), 1L, "k" + (i - 2), 1L)));
+        cases.add(new Scenario("fibonacci32", fibonacci, "k32", UfoAmount.of(1000),
+                Map.of("k0", UfoAmount.of(10_000_000_000L)), true));
+        cases.add(new Scenario("sibling_conflict", List.of(
+                pattern("a-c", "a", 1, Map.of("c", 1L)), pattern("a-d", "a", 1, Map.of("d", 1L)),
+                pattern("b-c", "b", 1, Map.of("c", 1L)), pattern("done", "done", 1, Map.of("a", 1L, "b", 1L))),
+                "done", UfoAmount.of(1000), Map.of("c", UfoAmount.of(1000), "d", UfoAmount.of(1000)), true));
+        cases.add(new Scenario("split_recipes", List.of(
+                pattern("a", "target", 1, Map.of("raw-a", 1L)), pattern("b", "target", 1, Map.of("raw-b", 1L))),
+                "target", UfoAmount.of(1000), Map.of("raw-a", UfoAmount.of(400), "raw-b", UfoAmount.of(600)), true));
+        var byproduct = new CraftingPattern<>("ab", 0, Map.of("raw", UfoAmount.ONE),
+                Map.of("a", UfoAmount.of(2), "b", UfoAmount.ONE), Set.of("a"));
+        cases.add(new Scenario("byproduct", List.of(byproduct,
+                pattern("done", "done", 1, Map.of("a", 2L, "b", 1L))), "done", UfoAmount.of(1000),
+                Map.of("raw", UfoAmount.of(1000)), true));
+        List<CraftingPattern<String>> wide = new ArrayList<>();
+        Map<String, UfoAmount> ingredients = new TreeMap<>();
+        for (int i = 0; i < 1024; i++) {
+            wide.add(pattern(String.format("p%05d", i), "k" + i, 1, Map.of("raw", 1L)));
+            ingredients.put("k" + i, UfoAmount.ONE);
+        }
+        wide.add(new CraftingPattern<>("target", ingredients, Map.of("target", UfoAmount.ONE)));
+        cases.add(new Scenario("wide1024", wide, "target", UfoAmount.of(1000),
+                Map.of("raw", UfoAmount.of(1_024_000)), true));
+        return cases;
+    }
+    private static Scenario chain(int depth, UfoAmount amount, boolean missing) {
+        List<CraftingPattern<String>> patterns = new ArrayList<>();
+        for (int i = 1; i <= depth; i++) {
+            patterns.add(pattern(String.format("p%05d", i), "k" + i, 1, Map.of("k" + (i - 1), 1L)));
+        }
+        return new Scenario("chain" + depth + (missing ? "_missing" : amount.bitLength() > 63 ? "_exact_bigint" : ""),
+                patterns, "k" + depth, amount, missing ? Map.of() : Map.of("k0", amount), !missing);
+    }
+    private static CraftingPattern<String> pattern(String id, String output, long count, Map<String, Long> inputs) {
+        Map<String, UfoAmount> amounts = new TreeMap<>();
+        inputs.forEach((key, value) -> amounts.put(key, UfoAmount.of(value)));
+        return new CraftingPattern<>(id, amounts, Map.of(output, UfoAmount.of(count)));
+    }
+}

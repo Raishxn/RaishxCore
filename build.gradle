@@ -58,6 +58,70 @@ tasks.named('test', Test).configure {
     useJUnitPlatform()
 }
 
+// Opt-in benchmarks: never bundled into the mod or run by the normal test/build tasks.
+sourceSets {
+    gameTest {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+    benchmark {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+neoForge.mods {
+    raishxcore_tests { sourceSet sourceSets.gameTest }
+}
+neoForge.runs.configureEach {
+    loadedMods = [neoForge.mods.raishxcore]
+}
+neoForge.runs.gameTestServer {
+    loadedMods.add(neoForge.mods.raishxcore_tests)
+    systemProperty 'neoforge.enabledGameTestNamespaces', 'raishxcore_tests'
+}
+def preparePlannerGameTest = tasks.register('preparePlannerGameTest', Copy) {
+    from 'src/gameTest/templates'
+    into 'run/gameteststructures'
+}
+tasks.named('runGameTestServer') { dependsOn preparePlannerGameTest }
+
+tasks.register('plannerBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Measures planner time, allocated bytes, cache reuse and plan validity.'
+    classpath = sourceSets.benchmark.runtimeClasspath
+    mainClass = 'com.raishxn.ufocore.benchmark.PlannerBenchmark'
+    args layout.buildDirectory.file('reports/planner/benchmark.csv').get().asFile.absolutePath
+    jvmArgs '-Xms256m', '-Xmx1g'
+}
+
+// Compile only the unmodified pure V2 planner and its javac-discovered dependencies from
+// a local reference checkout. This reference code is never included in a RaishxCore jar.
+def thunderboltSources = providers.gradleProperty('thunderboltSource')
+        .map { file(it + '/src/main/java') }
+        .getOrElse(file('../Thunderbolt-Core/src/main/java'))
+def compileThunderboltReference = tasks.register('compileThunderboltReference', JavaCompile) {
+    group = 'verification'
+    source fileTree('src/benchmarkReference/java')
+    source new File(thunderboltSources, 'com/moakiee/thunderbolt/core/crafting/planner/CraftPlannerV2.java')
+    classpath = sourceSets.benchmark.output + sourceSets.main.output
+    options.sourcepath = files(thunderboltSources)
+    options.compilerArgs += ['-implicit:class']
+    destinationDirectory = layout.buildDirectory.dir('classes/thunderboltReference')
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+    dependsOn tasks.named('benchmarkClasses')
+}
+
+tasks.register('plannerComparison', JavaExec) {
+    group = 'verification'
+    description = 'Runs identical synthetic cases through RaishxCore and the local Thunderbolt V2 reference.'
+    dependsOn compileThunderboltReference
+    classpath = sourceSets.benchmark.runtimeClasspath + files(compileThunderboltReference.flatMap { it.destinationDirectory })
+    mainClass = 'com.raishxn.ufocore.benchmark.PlannerBenchmark'
+    args layout.buildDirectory.file('reports/planner/comparison.csv').get().asFile.absolutePath, 'compare'
+    jvmArgs '-Xms256m', '-Xmx1g'
+}
+
 def generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
     def replaceProperties = [
             minecraft_version_range: minecraft_version_range,
