@@ -85,23 +85,10 @@ public final class Ae2PlannerBridge {
         var captured = snapshot;
         var capturedStock = Map.copyOf(stock);
         try {
-            return WORKERS.submit(() -> {
-                try {
-                    return calculate(captured, capturedStock, amount, strategy);
-                } catch (java.util.concurrent.CancellationException cancelled) {
-                    lastStatus = "cancelled";
-                    throw cancelled;
-                } catch (TimeoutException deadline) {
-                    lastStatus = "timeout";
-                    throw new IllegalStateException("RaishxCore planning deadline exceeded", deadline);
-                } catch (RuntimeException unexpected) {
-                    // AE2 menus surface the thrown cause to the player; this log is the
-                    // structured trace for the addon maintainers.
-                    lastStatus = "failed: " + unexpected;
-                    LOG.warn("RaishxCore planning failed unexpectedly.", unexpected);
-                    throw unexpected;
-                }
-            });
+            return WORKERS.submit(PlanningTask.classified(
+                    () -> calculate(captured, capturedStock, amount, strategy),
+                    status -> lastStatus = status,
+                    unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)));
         } catch (RejectedExecutionException busy) {
             lastStatus = "ae2: planner queue full";
             return null;

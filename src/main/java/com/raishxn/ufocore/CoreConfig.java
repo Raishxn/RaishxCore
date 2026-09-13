@@ -4,8 +4,8 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 
 /**
  * Runtime switches for the platform. The planner kill-switch is the field escape
- * hatch: with it off, every crafting calculation falls back to AE2's built-in
- * planner and no RaishxCore code touches the request.
+ * hatch: with it off, new crafting requests delegate to AE2's built-in planner
+ * before graph capture. Already submitted calculations are not cancelled.
  */
 public final class CoreConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
@@ -19,7 +19,7 @@ public final class CoreConfig {
 
     /**
      * Test-only override for {@link #isPlannerEnabled()}; never set outside automated
-     * tests because the switch is a global server-wide decision.
+     * tests because the COMMON switch is an instance-wide decision.
      */
     public static volatile Boolean plannerEnabledTestOverride;
 

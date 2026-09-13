@@ -3,10 +3,13 @@ package com.raishxn.ufocore;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /** The planner kill-switch must default to enabled and obey the test override. */
 class CoreConfigTest {
+    @AfterEach
+    void clearOverride() { CoreConfig.plannerEnabledTestOverride = null; }
     @Test
     void testOverrideDrivesTheKillSwitch() {
         CoreConfig.plannerEnabledTestOverride = true;

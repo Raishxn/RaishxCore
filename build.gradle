@@ -150,6 +150,9 @@ sourceSets.main.resources.srcDir generateModMetadata
 neoForge.ideSyncTask generateModMetadata
 
 tasks.withType(JavaCompile).configureEach {
+    // Match UFO's release gate. NeoForge registration deliberately escapes this;
+    // all other warnings must be resolved or justified at the narrowest scope.
+    options.compilerArgs.addAll(['-Xlint:all', '-Xlint:-this-escape', '-Werror'])
     options.encoding = 'UTF-8'
 }
 

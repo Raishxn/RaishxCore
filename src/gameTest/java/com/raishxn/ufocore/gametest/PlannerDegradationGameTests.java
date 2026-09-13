@@ -26,7 +26,6 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 @PrefixGameTestTemplate(false)
 public final class PlannerDegradationGameTests {
     @GameTest(template = "empty", timeoutTicks = 240)
-    @SuppressWarnings("unchecked")
     public static void declinedGraphFallsBackToVanillaAe2Planner(GameTestHelper helper) {
         try {
             runDeclineScenario(helper);
@@ -40,10 +39,13 @@ public final class PlannerDegradationGameTests {
         var fixture = new PlannerGameTests.Fixture(helper);
         // Crafting patterns with substitution are outside the Core graph contract (it
         // only accepts graphs of exact inputs); AE2's built-in planner handles them natively.
-        RecipeHolder<CraftingRecipe> stoneBricks = (RecipeHolder<CraftingRecipe>) helper.getLevel()
-                .getServer().getRecipeManager()
+        var recipe = helper.getLevel().getServer().getRecipeManager()
                 .byKey(ResourceLocation.withDefaultNamespace("stone_bricks"))
                 .orElseThrow(() -> new IllegalStateException("vanilla stone_bricks recipe missing"));
+        if (!(recipe.value() instanceof CraftingRecipe crafting)) {
+            throw new IllegalStateException("stone_bricks is not a crafting recipe");
+        }
+        RecipeHolder<CraftingRecipe> stoneBricks = new RecipeHolder<>(recipe.id(), crafting);
         var stone = new ItemStack(Items.STONE);
         var empty = ItemStack.EMPTY;
         IPatternDetails substituted = PatternDetailsHelper.decodePattern(
