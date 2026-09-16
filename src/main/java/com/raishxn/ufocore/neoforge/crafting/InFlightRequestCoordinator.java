@@ -27,19 +27,25 @@ final class InFlightRequestCoordinator<K, V> {
     private final AtomicLong submitted = new AtomicLong();
     private final AtomicLong deduplicated = new AtomicLong();
     private final AtomicLong cancelled = new AtomicLong();
+    private final AtomicInteger inFlight = new AtomicInteger();
 
     InFlightRequestCoordinator(Executor executor) {
         this.executor = Objects.requireNonNull(executor, "executor");
     }
 
     Future<V> submit(K key, Callable<V> calculation) {
-        return submit(key, new Object(), calculation);
+        return submit(key, new Object(), calculation, Integer.MAX_VALUE);
     }
 
     Future<V> submit(K key, Object owner, Callable<V> calculation) {
+        return submit(key, owner, calculation, Integer.MAX_VALUE);
+    }
+
+    Future<V> submit(K key, Object owner, Callable<V> calculation, int maxInFlight) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(calculation, "calculation");
+        if (maxInFlight < 1) throw new IllegalArgumentException("maxInFlight must be positive");
         while (true) {
             SharedTask existing = tasks.get(key);
             if (existing != null) {
@@ -51,17 +57,29 @@ final class InFlightRequestCoordinator<K, V> {
                 continue;
             }
 
+            reserve(maxInFlight);
             SharedTask created = new SharedTask(key, calculation);
-            if (tasks.putIfAbsent(key, created) != null) continue;
+            if (tasks.putIfAbsent(key, created) != null) {
+                inFlight.decrementAndGet();
+                continue;
+            }
             try {
                 executor.execute(created.worker);
                 submitted.incrementAndGet();
                 return created.newView(owner);
             } catch (RuntimeException rejected) {
-                tasks.remove(key, created);
+                if (tasks.remove(key, created)) inFlight.decrementAndGet();
                 created.fail(rejected);
                 throw rejected;
             }
+        }
+    }
+
+    private void reserve(int limit) {
+        while (true) {
+            int observed = inFlight.get();
+            if (observed >= limit) throw new PerGridLimitExceededException();
+            if (inFlight.compareAndSet(observed, observed + 1)) return;
         }
     }
 
@@ -83,7 +101,7 @@ final class InFlightRequestCoordinator<K, V> {
     }
 
     Stats stats() {
-        return new Stats(tasks.size(), submitted.get(), deduplicated.get(), cancelled.get());
+        return new Stats(inFlight.get(), submitted.get(), deduplicated.get(), cancelled.get());
     }
 
     record Stats(int inFlight, long submitted, long deduplicated, long cancelled) {}
@@ -127,7 +145,7 @@ final class InFlightRequestCoordinator<K, V> {
                 Thread.currentThread().interrupt();
                 result.completeExceptionally(interrupted);
             } finally {
-                tasks.remove(key, this);
+                if (tasks.remove(key, this)) inFlight.decrementAndGet();
             }
         }
     }
@@ -172,6 +190,14 @@ final class InFlightRequestCoordinator<K, V> {
         @Override public V get(long timeout, TimeUnit unit)
                 throws InterruptedException, ExecutionException, TimeoutException {
             return view.get(timeout, unit);
+        }
+    }
+
+    static final class PerGridLimitExceededException extends java.util.concurrent.RejectedExecutionException {
+        @java.io.Serial private static final long serialVersionUID = 1L;
+
+        private PerGridLimitExceededException() {
+            super("per-grid planner limit reached");
         }
     }
 }

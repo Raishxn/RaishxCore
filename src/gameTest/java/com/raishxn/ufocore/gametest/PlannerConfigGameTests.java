@@ -36,7 +36,9 @@ public final class PlannerConfigGameTests {
         var policy = CoreConfig.plannerPolicy();
         helper.assertTrue(policy.workers() >= 1 && policy.queueCapacity() >= 1
                         && policy.timeoutMillis() >= 10 && policy.maxOperations() >= 1_000
-                        && policy.snapshotMaxEstimatedBytes() >= 1024L * 1024,
+                        && policy.snapshotMaxEstimatedBytes() >= 1024L * 1024
+                        && policy.maxInFlightPerGrid() >= 1 && policy.circuitFailureThreshold() >= 1
+                        && policy.circuitCooldownMillis() >= 100,
                 "loaded planner policy is outside its declared safety bounds");
         Object setting = CoreConfig.SPEC.getValues().get("planner.enabled");
         helper.assertTrue(setting instanceof ModConfigSpec.BooleanValue, "planner.enabled is not a BooleanValue");

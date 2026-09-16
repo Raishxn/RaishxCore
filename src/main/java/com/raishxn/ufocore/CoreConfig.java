@@ -12,7 +12,8 @@ public final class CoreConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
     private static final PlannerPolicy DEFAULT_POLICY = new PlannerPolicy(
             2, 32, 2_000, 10_000_000L, 100_000, 128,
-            50, 100_000, 25_000, 64L * 1024 * 1024, 16);
+            50, 100_000, 25_000, 64L * 1024 * 1024, 16,
+            4, 3, 10_000);
 
     private static final ModConfigSpec.BooleanValue PLANNER_ENABLED = BUILDER
             .comment("Replace AE2's crafting planner with the RaishxCore iterative planner.",
@@ -53,6 +54,18 @@ public final class CoreConfig {
     private static final ModConfigSpec.IntValue SNAPSHOT_CACHE_ENTRIES = BUILDER
             .comment("Maximum target-specific snapshots cached per AE2 grid revision.")
             .defineInRange("planner.snapshot.cacheEntries", DEFAULT_POLICY.snapshotCacheEntries(), 1, 256);
+    private static final ModConfigSpec.IntValue MAX_IN_FLIGHT_PER_GRID = BUILDER
+            .comment("Maximum distinct calculations in flight for one AE2 grid.",
+                    "Equivalent requests still share an existing calculation at this limit.")
+            .defineInRange("planner.maxInFlightPerGrid", DEFAULT_POLICY.maxInFlightPerGrid(), 1, 256);
+    private static final ModConfigSpec.IntValue CIRCUIT_FAILURE_THRESHOLD = BUILDER
+            .comment("Consecutive planner failures that open one grid's circuit breaker.")
+            .defineInRange("planner.circuitBreaker.failureThreshold",
+                    DEFAULT_POLICY.circuitFailureThreshold(), 1, 100);
+    private static final ModConfigSpec.IntValue CIRCUIT_COOLDOWN_MILLIS = BUILDER
+            .comment("Time an unhealthy grid delegates directly to AE2 before one recovery probe.")
+            .defineInRange("planner.circuitBreaker.cooldownMillis",
+                    DEFAULT_POLICY.circuitCooldownMillis(), 100, 300_000);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 
@@ -81,18 +94,21 @@ public final class CoreConfig {
         return new PlannerPolicy(PLANNER_WORKERS.get(), PLANNER_QUEUE_CAPACITY.get(),
                 PLANNER_TIMEOUT_MILLIS.get(), PLANNER_MAX_OPERATIONS.get(), PLANNER_MAX_DEPTH.get(),
                 PLANNER_CHECKPOINT_INTERVAL.get(), SNAPSHOT_TIMEOUT_MILLIS.get(), SNAPSHOT_MAX_EDGES.get(),
-                SNAPSHOT_MAX_KEYS.get(), SNAPSHOT_MAX_ESTIMATED_BYTES.get(), SNAPSHOT_CACHE_ENTRIES.get());
+                SNAPSHOT_MAX_KEYS.get(), SNAPSHOT_MAX_ESTIMATED_BYTES.get(), SNAPSHOT_CACHE_ENTRIES.get(),
+                MAX_IN_FLIGHT_PER_GRID.get(), CIRCUIT_FAILURE_THRESHOLD.get(), CIRCUIT_COOLDOWN_MILLIS.get());
     }
 
     public record PlannerPolicy(int workers, int queueCapacity, int timeoutMillis, long maxOperations,
                                 int maxDepth, int checkpointInterval, int snapshotTimeoutMillis,
                                 int snapshotMaxEdges, int snapshotMaxKeys, long snapshotMaxEstimatedBytes,
-                                int snapshotCacheEntries) {
+                                int snapshotCacheEntries, int maxInFlightPerGrid,
+                                int circuitFailureThreshold, int circuitCooldownMillis) {
         public PlannerPolicy {
             if (workers < 1 || queueCapacity < 1 || timeoutMillis < 1 || maxOperations < 1
                     || maxDepth < 1 || checkpointInterval < 1 || snapshotTimeoutMillis < 1
                     || snapshotMaxEdges < 1 || snapshotMaxKeys < 1 || snapshotMaxEstimatedBytes < 1
-                    || snapshotCacheEntries < 1) {
+                    || snapshotCacheEntries < 1 || maxInFlightPerGrid < 1 || circuitFailureThreshold < 1
+                    || circuitCooldownMillis < 1) {
                 throw new IllegalArgumentException("planner policy limits must be positive");
             }
         }

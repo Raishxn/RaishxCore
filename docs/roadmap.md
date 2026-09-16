@@ -30,11 +30,13 @@ green builds/GameTests and documentation matching the published code.
 - [x] Cancel obsolete work on graph revision, grid unload/change, logout,
       planner disablement and server stop.
 - [x] Configure worker, queue, timeout, graph and estimated-memory limits.
-- [ ] Add per-grid backpressure and a circuit breaker.
+- [x] Add per-grid backpressure and a circuit breaker.
 - [ ] Expose latency, queue, cache, decline, timeout and fallback metrics
       (request, deduplication, cancellation, worker and queue counters are complete).
 - [ ] Test several grids and requests concurrently.
 - [ ] Make the benchmark a regression gate.
+- [ ] Run one differential capability/performance corpus against AE2 and
+      Thunderbolt V2 before making comparative performance or quality claims.
 - [ ] Test the lowest and highest supported AE2 versions.
 
 Gate: a cold request cannot monopolize a server tick, concurrent load remains

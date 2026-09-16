@@ -39,11 +39,14 @@ public final class Ae2PlannerBridge {
     private static final java.util.Set<Ae2PlannerBridge> ACTIVE = ConcurrentHashMap.newKeySet();
     private final ThreadPoolExecutor workers;
     private final InFlightRequestCoordinator<RequestKey, ICraftingPlan> requests;
+    private final PlannerCircuitBreaker circuitBreaker = new PlannerCircuitBreaker();
     private final Map<AEKey, Ae2PlanningSnapshot> snapshots = new LinkedHashMap<>(16, .75F, true);
     private volatile long revision = -1;
     private volatile long statusGeneration;
     private long hits;
     private long misses;
+    private long backpressureRejections;
+    private long circuitRejections;
     private volatile PlanningResult.Diagnostics lastDiagnostics;
     private volatile String lastStatus = "idle";
 
@@ -68,6 +71,7 @@ public final class Ae2PlannerBridge {
                 statusGeneration++;
                 snapshots.clear();
                 requests.cancelAll();
+                circuitBreaker.reset();
             }
             snapshot = snapshots.get(target);
             if (snapshot == null) {
@@ -104,15 +108,44 @@ public final class Ae2PlannerBridge {
         Object owner = requester.getActionSource().player()
                 .<Object>map(player -> player.getUUID())
                 .orElse(requester);
+        var requestKey = new RequestKey(revision, snapshot.target(), amount, strategy, capturedStock, policy);
+        if (!circuitBreaker.tryAcquire()) {
+            circuitRejections++;
+            lastStatus = "ae2: planner circuit open";
+            return null;
+        }
         try {
-            var requestKey = new RequestKey(revision, snapshot.target(), amount, strategy, capturedStock, policy);
             return requests.submit(requestKey, owner, PlanningTask.classified(
-                    () -> calculate(captured, capturedStock, amount, strategy, generation, policy),
+                    () -> calculateGuarded(captured, capturedStock, amount, strategy, generation, policy),
                     status -> recordStatus(generation, status),
-                    unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)));
+                    unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)),
+                    policy.maxInFlightPerGrid());
+        } catch (InFlightRequestCoordinator.PerGridLimitExceededException busyGrid) {
+            circuitBreaker.abortProbe(Duration.ofMillis(policy.circuitCooldownMillis()));
+            backpressureRejections++;
+            lastStatus = "ae2: per-grid planner limit";
+            return null;
         } catch (RejectedExecutionException busy) {
+            circuitBreaker.abortProbe(Duration.ofMillis(policy.circuitCooldownMillis()));
             lastStatus = "ae2: planner queue full";
             return null;
+        }
+    }
+
+    private ICraftingPlan calculateGuarded(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
+                                            long amount, CalculationStrategy strategy, long generation,
+                                            CoreConfig.PlannerPolicy policy) throws TimeoutException {
+        try {
+            ICraftingPlan plan = calculate(snapshot, stock, amount, strategy, generation, policy);
+            circuitBreaker.recordSuccess();
+            return plan;
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            circuitBreaker.abortProbe(Duration.ofMillis(policy.circuitCooldownMillis()));
+            throw cancelled;
+        } catch (TimeoutException | RuntimeException failure) {
+            circuitBreaker.recordFailure(policy.circuitFailureThreshold(),
+                    Duration.ofMillis(policy.circuitCooldownMillis()));
+            throw failure;
         }
     }
 
@@ -205,6 +238,7 @@ public final class Ae2PlannerBridge {
         statusGeneration++;
         requests.cancelAll();
         snapshots.clear();
+        circuitBreaker.reset();
         lastStatus = status;
         lastDiagnostics = null;
     }
@@ -229,14 +263,17 @@ public final class Ae2PlannerBridge {
 
     public Diagnostics diagnostics() {
         var requestStats = requests.stats();
+        var circuit = circuitBreaker.snapshot();
         return new Diagnostics(revision, hits, misses, lastStatus, lastDiagnostics,
                 requestStats.inFlight(), requestStats.submitted(), requestStats.deduplicated(),
-                requestStats.cancelled(), workers.getActiveCount(), workers.getQueue().size());
+                requestStats.cancelled(), workers.getActiveCount(), workers.getQueue().size(),
+                backpressureRejections, circuitRejections, circuit.state().name(), circuit.consecutiveFailures());
     }
     public record Diagnostics(long revision, long cacheHits, long cacheMisses, String status,
                               @Nullable PlanningResult.Diagnostics lastPlan, int inFlightRequests,
                               long submittedRequests, long deduplicatedRequests, long cancelledRequests,
-                              int activeWorkers, int queuedRequests) {}
+                              int activeWorkers, int queuedRequests, long backpressureRejections,
+                              long circuitRejections, String circuitState, int consecutiveFailures) {}
 
     private record RequestKey(long revision, String target, long amount, CalculationStrategy strategy,
                               Map<String, UfoAmount> inventory, CoreConfig.PlannerPolicy policy) {}
