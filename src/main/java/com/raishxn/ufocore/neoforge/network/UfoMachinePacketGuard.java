@@ -19,6 +19,18 @@ public final class UfoMachinePacketGuard {
     private UfoMachinePacketGuard() {
     }
 
+    /**
+     * Applies the shared player/action rate limit to C2S actions that are not tied
+     * to a block entity. The caller remains responsible for validating the held
+     * item, open menu and action-specific state.
+     */
+    public static boolean allow(IPayloadContext context, MachineAction action) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(action, "action");
+        if (!(context.player() instanceof ServerPlayer player)) return false;
+        return RATE_LIMITER.tryAcquire(player.getUUID(), action, player.level().getGameTime());
+    }
+
     public static <M extends AbstractContainerMenu, T extends BlockEntity> @Nullable T require(
             IPayloadContext context,
             BlockPos pos,

@@ -5,7 +5,8 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 /**
  * Runtime switches for the platform. The planner kill-switch is the field escape
  * hatch: with it off, new crafting requests delegate to AE2's built-in planner
- * before graph capture. Already submitted calculations are not cancelled.
+ * before graph capture. Already submitted calculations are cancelled when the
+ * planner is disabled or their source grid revision becomes obsolete.
  */
 public final class CoreConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();

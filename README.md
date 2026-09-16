@@ -27,6 +27,7 @@ their contracts may still change.
 UFO Future uses a composite build during development and declares `raishxcore` as a required mod.
 See [docs/consumer-integration.md](docs/consumer-integration.md) for the exact
 development and release setup.
+The ordered foundation work is tracked in [docs/roadmap.md](docs/roadmap.md).
 
 The planner switch is a NeoForge **COMMON** config (instance-wide, not a synced
 per-world server config), read for each new request. Disabling it delegates new

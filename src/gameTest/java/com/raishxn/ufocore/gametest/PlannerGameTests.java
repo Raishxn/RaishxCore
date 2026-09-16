@@ -53,6 +53,8 @@ public final class PlannerGameTests {
                     helper.assertTrue(fixture.diagnostics().revision() >= revision + 4,
                             "same-tick updates reused a stale graph");
                     helper.assertTrue(fresh.usedItems().get(fixture.raw) == 16, "stale pattern quantities");
+                    helper.assertTrue(fixture.diagnostics().status().equals("COMPLETE"),
+                            "obsolete request overwrote current planner diagnostics");
                     fixture.close();
                     helper.succeed();
                 });

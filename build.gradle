@@ -160,11 +160,45 @@ tasks.withType(ProcessResources).configureEach {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
+tasks.named('jar').configure {
+    from('LICENSE.md') {
+        into 'META-INF'
+        rename { 'LICENSE-raishxcore.md' }
+    }
+}
+
 publishing {
     publications {
         register('mavenJava', MavenPublication) {
             from components.java
             artifactId = mod_id
+            pom {
+                name = 'RaishxCore'
+                description = project.mod_description
+                url = 'https://github.com/Raishxn/RaishxCore'
+                licenses {
+                    license {
+                        name = 'GNU Lesser General Public License v3.0 or later'
+                        url = 'https://www.gnu.org/licenses/lgpl-3.0.html'
+                        distribution = 'repo'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'Raishxn'
+                        name = 'Raishxn'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/Raishxn/RaishxCore.git'
+                    developerConnection = 'scm:git:ssh://git@github.com/Raishxn/RaishxCore.git'
+                    url = 'https://github.com/Raishxn/RaishxCore'
+                }
+                issueManagement {
+                    system = 'GitHub Issues'
+                    url = 'https://github.com/Raishxn/RaishxCore/issues'
+                }
+            }
         }
     }
     repositories {

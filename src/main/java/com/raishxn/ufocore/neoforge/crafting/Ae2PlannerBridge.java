@@ -42,8 +42,11 @@ public final class Ae2PlannerBridge {
                 return worker;
             });
     static { WORKERS.allowCoreThreadTimeOut(true); }
+    private final InFlightRequestCoordinator<RequestKey, ICraftingPlan> requests =
+            new InFlightRequestCoordinator<>(WORKERS);
     private final Map<AEKey, Ae2PlanningSnapshot> snapshots = new LinkedHashMap<>(16, .75F, true);
-    private long revision = -1;
+    private volatile long revision = -1;
+    private volatile long statusGeneration;
     private long hits;
     private long misses;
     private volatile PlanningResult.Diagnostics lastDiagnostics;
@@ -58,7 +61,12 @@ public final class Ae2PlannerBridge {
         if (node == null || node.getGrid() != grid) return null;
         Ae2PlanningSnapshot snapshot;
         try {
-            if (revision != gridRevision) { snapshots.clear(); revision = gridRevision; }
+            if (revision != gridRevision) {
+                revision = gridRevision;
+                statusGeneration++;
+                snapshots.clear();
+                requests.cancelAll();
+            }
             snapshot = snapshots.get(target);
             if (snapshot == null) {
                 snapshot = Ae2PlanningSnapshot.capture(level, grid.getCraftingService(), target, revision);
@@ -84,10 +92,12 @@ public final class Ae2PlannerBridge {
         }
         var captured = snapshot;
         var capturedStock = Map.copyOf(stock);
+        long generation = statusGeneration;
         try {
-            return WORKERS.submit(PlanningTask.classified(
-                    () -> calculate(captured, capturedStock, amount, strategy),
-                    status -> lastStatus = status,
+            var requestKey = new RequestKey(revision, snapshot.target(), amount, strategy, capturedStock);
+            return requests.submit(requestKey, PlanningTask.classified(
+                    () -> calculate(captured, capturedStock, amount, strategy, generation),
+                    status -> recordStatus(generation, status),
                     unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)));
         } catch (RejectedExecutionException busy) {
             lastStatus = "ae2: planner queue full";
@@ -96,9 +106,10 @@ public final class Ae2PlannerBridge {
     }
 
     private ICraftingPlan calculate(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
-                                     long amount, CalculationStrategy strategy) throws TimeoutException {
+                                     long amount, CalculationStrategy strategy,
+                                     long generation) throws TimeoutException {
         long started = System.nanoTime();
-        var full = attempt(snapshot, stock, amount, started);
+        var full = attempt(snapshot, stock, amount, started, generation);
         if (full.status() == PlanningResult.Status.COMPLETE) return adapt(snapshot, full);
         if (strategy == CalculationStrategy.CRAFT_LESS) {
             long successful = 0;
@@ -106,7 +117,7 @@ public final class Ae2PlannerBridge {
             for (long increment = Long.highestOneBit(amount); increment > 0; increment /= 2) {
                 if (increment >= amount - successful) continue;
                 long test = successful + increment;
-                var candidate = attempt(snapshot, stock, test, started);
+                var candidate = attempt(snapshot, stock, test, started, generation);
                 if (candidate.status() == PlanningResult.Status.COMPLETE) { successful = test; best = candidate; }
             }
             if (best != null) return adapt(snapshot, best);
@@ -115,15 +126,17 @@ public final class Ae2PlannerBridge {
     }
 
     private PlanningResult<String> attempt(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
-                                           long amount, long started) throws TimeoutException {
+                                           long amount, long started, long generation) throws TimeoutException {
         long remaining = TIMEOUT_NANOS - (System.nanoTime() - started);
         if (remaining <= 0) throw new TimeoutException("RaishxCore planning deadline");
         var limits = new PlanningLimits(10_000_000, 100_000, Duration.ofNanos(remaining), 128);
         var result = new IterativeCraftingPlanner<String>().plan(snapshot.graph(),
                 new PlanningRequest<>(snapshot.target(), UfoAmount.of(amount), stock, limits,
                         PlanningCancellation.NEVER));
-        lastDiagnostics = result.diagnostics();
-        lastStatus = result.status().name();
+        if (statusGeneration == generation) {
+            lastDiagnostics = result.diagnostics();
+            lastStatus = result.status().name();
+        }
         switch (result.status()) {
             case COMPLETE, MISSING_INGREDIENTS -> { return result; }
             case CANCELLED -> throw new java.util.concurrent.CancellationException("RaishxCore planning cancelled");
@@ -171,11 +184,27 @@ public final class Ae2PlannerBridge {
 
     /** Records that this request was declined by the config kill-switch. */
     public void recordDisabled() {
+        statusGeneration++;
+        requests.cancelAll();
         lastStatus = "disabled";
         lastDiagnostics = null;
     }
 
-    public Diagnostics diagnostics() { return new Diagnostics(revision, hits, misses, lastStatus, lastDiagnostics); }
+    private void recordStatus(long generation, String status) {
+        if (statusGeneration == generation) lastStatus = status;
+    }
+
+    public Diagnostics diagnostics() {
+        var requestStats = requests.stats();
+        return new Diagnostics(revision, hits, misses, lastStatus, lastDiagnostics,
+                requestStats.inFlight(), requestStats.submitted(), requestStats.deduplicated(),
+                requestStats.cancelled(), WORKERS.getActiveCount(), WORKERS.getQueue().size());
+    }
     public record Diagnostics(long revision, long cacheHits, long cacheMisses, String status,
-                               @Nullable PlanningResult.Diagnostics lastPlan) {}
+                              @Nullable PlanningResult.Diagnostics lastPlan, int inFlightRequests,
+                              long submittedRequests, long deduplicatedRequests, long cancelledRequests,
+                              int activeWorkers, int queuedRequests) {}
+
+    private record RequestKey(long revision, String target, long amount, CalculationStrategy strategy,
+                              Map<String, UfoAmount> inventory) {}
 }
