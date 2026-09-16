@@ -33,6 +33,11 @@ public final class PlannerConfigGameTests {
     public static void loadedConfigDisablesPlannerThenReenablesOnSameGrid(GameTestHelper helper) {
         helper.assertTrue(CoreConfig.SPEC.isLoaded(), "registered COMMON config is not loaded");
         helper.assertTrue(CoreConfig.plannerEnabledTestOverride == null, "test override must not drive this scenario");
+        var policy = CoreConfig.plannerPolicy();
+        helper.assertTrue(policy.workers() >= 1 && policy.queueCapacity() >= 1
+                        && policy.timeoutMillis() >= 10 && policy.maxOperations() >= 1_000
+                        && policy.snapshotMaxEstimatedBytes() >= 1024L * 1024,
+                "loaded planner policy is outside its declared safety bounds");
         Object setting = CoreConfig.SPEC.getValues().get("planner.enabled");
         helper.assertTrue(setting instanceof ModConfigSpec.BooleanValue, "planner.enabled is not a BooleanValue");
         enabled = (ModConfigSpec.BooleanValue) setting;

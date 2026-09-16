@@ -10,6 +10,7 @@ import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
 import appeng.crafting.CraftingPlan;
 import com.mojang.logging.LogUtils;
+import com.raishxn.ufocore.CoreConfig;
 import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.api.crafting.planner.IterativeCraftingPlanner;
 import com.raishxn.ufocore.api.crafting.planner.PlanningCancellation;
@@ -35,17 +36,9 @@ import org.slf4j.Logger;
 /** Per-grid revision cache and bounded worker queue. No world/storage calls run on a worker. */
 public final class Ae2PlannerBridge {
     private static final Logger LOG = LogUtils.getLogger();
-    private static final long TIMEOUT_NANOS = Duration.ofSeconds(2).toNanos();
-    private static final ThreadPoolExecutor WORKERS = new ThreadPoolExecutor(2, 2, 30, TimeUnit.SECONDS,
-            new ArrayBlockingQueue<>(32), runnable -> {
-                Thread worker = new Thread(runnable, "RaishxCore-planner");
-                worker.setDaemon(true);
-                return worker;
-            });
-    static { WORKERS.allowCoreThreadTimeOut(true); }
     private static final java.util.Set<Ae2PlannerBridge> ACTIVE = ConcurrentHashMap.newKeySet();
-    private final InFlightRequestCoordinator<RequestKey, ICraftingPlan> requests =
-            new InFlightRequestCoordinator<>(WORKERS);
+    private final ThreadPoolExecutor workers;
+    private final InFlightRequestCoordinator<RequestKey, ICraftingPlan> requests;
     private final Map<AEKey, Ae2PlanningSnapshot> snapshots = new LinkedHashMap<>(16, .75F, true);
     private volatile long revision = -1;
     private volatile long statusGeneration;
@@ -55,6 +48,8 @@ public final class Ae2PlannerBridge {
     private volatile String lastStatus = "idle";
 
     public Ae2PlannerBridge() {
+        workers = WorkerPool.INSTANCE;
+        requests = new InFlightRequestCoordinator<>(workers);
         ACTIVE.add(this);
     }
 
@@ -65,6 +60,7 @@ public final class Ae2PlannerBridge {
                 || requester == null || requester.getActionSource() == null || amount <= 0) return null;
         var node = requester.getGridNode();
         if (node == null || node.getGrid() != grid) return null;
+        CoreConfig.PlannerPolicy policy = CoreConfig.plannerPolicy();
         Ae2PlanningSnapshot snapshot;
         try {
             if (revision != gridRevision) {
@@ -75,8 +71,14 @@ public final class Ae2PlannerBridge {
             }
             snapshot = snapshots.get(target);
             if (snapshot == null) {
-                snapshot = Ae2PlanningSnapshot.capture(level, grid.getCraftingService(), target, revision);
-                if (snapshots.size() >= 16) snapshots.remove(snapshots.keySet().iterator().next());
+                var captureLimits = new Ae2PlanningSnapshot.CaptureLimits(
+                        Duration.ofMillis(policy.snapshotTimeoutMillis()), policy.snapshotMaxEdges(),
+                        policy.snapshotMaxKeys(), policy.snapshotMaxEstimatedBytes());
+                snapshot = Ae2PlanningSnapshot.capture(
+                        level, grid.getCraftingService(), target, revision, captureLimits);
+                if (snapshots.size() >= policy.snapshotCacheEntries()) {
+                    snapshots.remove(snapshots.keySet().iterator().next());
+                }
                 snapshots.put(target, snapshot);
                 misses++;
             } else hits++;
@@ -103,9 +105,9 @@ public final class Ae2PlannerBridge {
                 .<Object>map(player -> player.getUUID())
                 .orElse(requester);
         try {
-            var requestKey = new RequestKey(revision, snapshot.target(), amount, strategy, capturedStock);
+            var requestKey = new RequestKey(revision, snapshot.target(), amount, strategy, capturedStock, policy);
             return requests.submit(requestKey, owner, PlanningTask.classified(
-                    () -> calculate(captured, capturedStock, amount, strategy, generation),
+                    () -> calculate(captured, capturedStock, amount, strategy, generation, policy),
                     status -> recordStatus(generation, status),
                     unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)));
         } catch (RejectedExecutionException busy) {
@@ -116,9 +118,9 @@ public final class Ae2PlannerBridge {
 
     private ICraftingPlan calculate(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
                                      long amount, CalculationStrategy strategy,
-                                     long generation) throws TimeoutException {
+                                     long generation, CoreConfig.PlannerPolicy policy) throws TimeoutException {
         long started = System.nanoTime();
-        var full = attempt(snapshot, stock, amount, started, generation);
+        var full = attempt(snapshot, stock, amount, started, generation, policy);
         if (full.status() == PlanningResult.Status.COMPLETE) return adapt(snapshot, full);
         if (strategy == CalculationStrategy.CRAFT_LESS) {
             long successful = 0;
@@ -126,7 +128,7 @@ public final class Ae2PlannerBridge {
             for (long increment = Long.highestOneBit(amount); increment > 0; increment /= 2) {
                 if (increment >= amount - successful) continue;
                 long test = successful + increment;
-                var candidate = attempt(snapshot, stock, test, started, generation);
+                var candidate = attempt(snapshot, stock, test, started, generation, policy);
                 if (candidate.status() == PlanningResult.Status.COMPLETE) { successful = test; best = candidate; }
             }
             if (best != null) return adapt(snapshot, best);
@@ -135,10 +137,13 @@ public final class Ae2PlannerBridge {
     }
 
     private PlanningResult<String> attempt(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
-                                           long amount, long started, long generation) throws TimeoutException {
-        long remaining = TIMEOUT_NANOS - (System.nanoTime() - started);
+                                           long amount, long started, long generation,
+                                           CoreConfig.PlannerPolicy policy) throws TimeoutException {
+        long timeoutNanos = Duration.ofMillis(policy.timeoutMillis()).toNanos();
+        long remaining = timeoutNanos - (System.nanoTime() - started);
         if (remaining <= 0) throw new TimeoutException("RaishxCore planning deadline");
-        var limits = new PlanningLimits(10_000_000, 100_000, Duration.ofNanos(remaining), 128);
+        var limits = new PlanningLimits(policy.maxOperations(), policy.maxDepth(),
+                Duration.ofNanos(remaining), policy.checkpointInterval());
         var result = new IterativeCraftingPlanner<String>().plan(snapshot.graph(),
                 new PlanningRequest<>(snapshot.target(), UfoAmount.of(amount), stock, limits,
                         PlanningCancellation.NEVER));
@@ -226,7 +231,7 @@ public final class Ae2PlannerBridge {
         var requestStats = requests.stats();
         return new Diagnostics(revision, hits, misses, lastStatus, lastDiagnostics,
                 requestStats.inFlight(), requestStats.submitted(), requestStats.deduplicated(),
-                requestStats.cancelled(), WORKERS.getActiveCount(), WORKERS.getQueue().size());
+                requestStats.cancelled(), workers.getActiveCount(), workers.getQueue().size());
     }
     public record Diagnostics(long revision, long cacheHits, long cacheMisses, String status,
                               @Nullable PlanningResult.Diagnostics lastPlan, int inFlightRequests,
@@ -234,5 +239,21 @@ public final class Ae2PlannerBridge {
                               int activeWorkers, int queuedRequests) {}
 
     private record RequestKey(long revision, String target, long amount, CalculationStrategy strategy,
-                              Map<String, UfoAmount> inventory) {}
+                              Map<String, UfoAmount> inventory, CoreConfig.PlannerPolicy policy) {}
+
+    private static final class WorkerPool {
+        private static final ThreadPoolExecutor INSTANCE = create();
+
+        private static ThreadPoolExecutor create() {
+            CoreConfig.PlannerPolicy policy = CoreConfig.plannerPolicy();
+            var executor = new ThreadPoolExecutor(policy.workers(), policy.workers(), 30, TimeUnit.SECONDS,
+                    new ArrayBlockingQueue<>(policy.queueCapacity()), runnable -> {
+                        Thread worker = new Thread(runnable, "RaishxCore-planner");
+                        worker.setDaemon(true);
+                        return worker;
+                    });
+            executor.allowCoreThreadTimeOut(true);
+            return executor;
+        }
+    }
 }

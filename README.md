@@ -28,10 +28,12 @@ UFO Future uses a composite build during development and declares `raishxcore` a
 See [docs/consumer-integration.md](docs/consumer-integration.md) for the exact
 development and release setup.
 The ordered foundation work is tracked in [docs/roadmap.md](docs/roadmap.md).
+Planner limits and restart semantics are documented in
+[docs/planner-configuration.md](docs/planner-configuration.md).
 
 The planner switch is a NeoForge **COMMON** config (instance-wide, not a synced
 per-world server config), read for each new request. Disabling it delegates new
-calculations to AE2; it does not cancel calculations already submitted.
+calculations to AE2 and cancels calculations already submitted to the Core.
 
 A graph decline or full worker queue delegates to AE2 before submission. After
 submission, deadlines, cooperative cancellation and unexpected runtime errors

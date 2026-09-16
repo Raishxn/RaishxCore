@@ -29,7 +29,7 @@ green builds/GameTests and documentation matching the published code.
 - [x] Deduplicate equivalent in-flight requests with independent caller futures.
 - [x] Cancel obsolete work on graph revision, grid unload/change, logout,
       planner disablement and server stop.
-- [ ] Configure worker, queue, timeout, graph and memory limits.
+- [x] Configure worker, queue, timeout, graph and estimated-memory limits.
 - [ ] Add per-grid backpressure and a circuit breaker.
 - [ ] Expose latency, queue, cache, decline, timeout and fallback metrics
       (request, deduplication, cancellation, worker and queue counters are complete).
