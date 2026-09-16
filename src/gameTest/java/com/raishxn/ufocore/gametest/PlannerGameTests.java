@@ -134,6 +134,8 @@ public final class PlannerGameTests {
         void close() {
             grid.getCraftingService().removeGlobalCraftingProvider(provider);
             managed.destroy();
+            helper.assertTrue(diagnostics().status().equals("grid closed"),
+                    "destroying the final grid node did not close the planner bridge");
         }
     }
     private static final class Provider implements ICraftingProvider {

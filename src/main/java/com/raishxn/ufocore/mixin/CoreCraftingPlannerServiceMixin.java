@@ -1,6 +1,7 @@
 package com.raishxn.ufocore.mixin;
 
 import appeng.api.networking.IGrid;
+import appeng.api.networking.IGridNode;
 import appeng.api.networking.crafting.CalculationStrategy;
 import appeng.api.networking.crafting.ICraftingPlan;
 import appeng.api.networking.crafting.ICraftingSimulationRequester;
@@ -18,6 +19,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(value = CraftingService.class, remap = false)
@@ -40,6 +42,13 @@ public abstract class CoreCraftingPlannerServiceMixin implements PlannerGridServ
         long revision = ((PlannerRevisionSource) craftingProviders).raishxcore$getPatternRevision();
         Future<ICraftingPlan> result = raishxcore$planner.begin(level, grid, requester, target, amount, strategy, revision);
         if (result != null) cir.setReturnValue(result);
+    }
+
+    @Inject(method = "removeNode", at = @At("HEAD"))
+    private void raishxcore$cancelPlanningForGridChange(IGridNode node, CallbackInfo ci) {
+        if (raishxcore$planner == null) return;
+        if (grid.size() <= 1) raishxcore$planner.close();
+        else raishxcore$planner.invalidate("grid node removed");
     }
 
     @Override public Ae2PlannerBridge.Diagnostics raishxcore$getPlannerDiagnostics() {

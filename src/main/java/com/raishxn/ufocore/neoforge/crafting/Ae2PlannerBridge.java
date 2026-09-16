@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -42,6 +43,7 @@ public final class Ae2PlannerBridge {
                 return worker;
             });
     static { WORKERS.allowCoreThreadTimeOut(true); }
+    private static final java.util.Set<Ae2PlannerBridge> ACTIVE = ConcurrentHashMap.newKeySet();
     private final InFlightRequestCoordinator<RequestKey, ICraftingPlan> requests =
             new InFlightRequestCoordinator<>(WORKERS);
     private final Map<AEKey, Ae2PlanningSnapshot> snapshots = new LinkedHashMap<>(16, .75F, true);
@@ -51,6 +53,10 @@ public final class Ae2PlannerBridge {
     private long misses;
     private volatile PlanningResult.Diagnostics lastDiagnostics;
     private volatile String lastStatus = "idle";
+
+    public Ae2PlannerBridge() {
+        ACTIVE.add(this);
+    }
 
     @Nullable public Future<ICraftingPlan> begin(Level level, IGrid grid,
                                                   ICraftingSimulationRequester requester, AEKey target,
@@ -93,9 +99,12 @@ public final class Ae2PlannerBridge {
         var captured = snapshot;
         var capturedStock = Map.copyOf(stock);
         long generation = statusGeneration;
+        Object owner = requester.getActionSource().player()
+                .<Object>map(player -> player.getUUID())
+                .orElse(requester);
         try {
             var requestKey = new RequestKey(revision, snapshot.target(), amount, strategy, capturedStock);
-            return requests.submit(requestKey, PlanningTask.classified(
+            return requests.submit(requestKey, owner, PlanningTask.classified(
                     () -> calculate(captured, capturedStock, amount, strategy, generation),
                     status -> recordStatus(generation, status),
                     unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)));
@@ -184,10 +193,29 @@ public final class Ae2PlannerBridge {
 
     /** Records that this request was declined by the config kill-switch. */
     public void recordDisabled() {
+        invalidate("disabled");
+    }
+
+    public void invalidate(String status) {
         statusGeneration++;
         requests.cancelAll();
-        lastStatus = "disabled";
+        snapshots.clear();
+        lastStatus = status;
         lastDiagnostics = null;
+    }
+
+    public void close() {
+        invalidate("grid closed");
+        ACTIVE.remove(this);
+    }
+
+    public static void cancelForPlayer(java.util.UUID playerId) {
+        for (Ae2PlannerBridge bridge : ACTIVE) bridge.requests.cancelOwner(playerId);
+    }
+
+    public static void cancelForServerStop() {
+        for (Ae2PlannerBridge bridge : ACTIVE) bridge.invalidate("server stopping");
+        ACTIVE.clear();
     }
 
     private void recordStatus(long generation, String status) {

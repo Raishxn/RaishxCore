@@ -27,8 +27,8 @@ green builds/GameTests and documentation matching the published code.
 - [ ] Replace monolithic server-thread graph capture with incremental snapshots
       or cooperative capture budgeted across ticks.
 - [x] Deduplicate equivalent in-flight requests with independent caller futures.
-- [ ] Cancel obsolete work on graph revision, unload, logout and server stop
-      (revision changes and planner disablement are complete).
+- [x] Cancel obsolete work on graph revision, grid unload/change, logout,
+      planner disablement and server stop.
 - [ ] Configure worker, queue, timeout, graph and memory limits.
 - [ ] Add per-grid backpressure and a circuit breaker.
 - [ ] Expose latency, queue, cache, decline, timeout and fallback metrics

@@ -86,6 +86,48 @@ class InFlightRequestCoordinatorTest {
     }
 
     @Test
+    void cancellingOneOwnerPreservesSharedWorkForAnotherOwner() throws Exception {
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var first = coordinator.submit("same", "first-owner", () -> {
+            started.countDown();
+            release.await();
+            return 7;
+        });
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+        var second = coordinator.submit("same", "second-owner", () -> 99);
+
+        assertEquals(1, coordinator.cancelOwner("first-owner"));
+        assertThrows(CancellationException.class, first::get);
+        release.countDown();
+        assertEquals(7, second.get(5, TimeUnit.SECONDS));
+        assertEquals(0, coordinator.stats().cancelled());
+    }
+
+    @Test
+    void cancellingTheLastOwnerInterruptsTheSharedWorker() throws Exception {
+        var started = new CountDownLatch(1);
+        var interrupted = new CountDownLatch(1);
+        var future = coordinator.submit("only", "player", () -> {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+                return 1;
+            } catch (InterruptedException stopped) {
+                interrupted.countDown();
+                throw stopped;
+            }
+        });
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        assertEquals(1, coordinator.cancelOwner("player"));
+
+        assertThrows(CancellationException.class, future::get);
+        assertTrue(interrupted.await(5, TimeUnit.SECONDS));
+        assertEquals(1, coordinator.stats().cancelled());
+    }
+
+    @Test
     void rejectedExecutionDoesNotLeaveAPhantomInFlightRequest() {
         var rejecting = new InFlightRequestCoordinator<String, Integer>(command -> {
             throw new RejectedExecutionException("full");
