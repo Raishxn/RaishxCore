@@ -29,7 +29,9 @@ The complete semantic and differential plan is documented in
 not a favorable microbenchmark: RaishxCore must become a verified semantic
 superset of Thunderbolt V2, retain exact `BigInteger` quantities, reduce
 server-thread impact, improve missing-material quality and prove those claims
-against the same frozen corpus and environment.
+against the same frozen corpus and environment. AE2-VM is also a fixed
+specialized baseline for compiled bytecode, shared-DAG aggregation and warm-cache
+performance.
 
 - [ ] Replace monolithic server-thread graph capture with incremental snapshots
       or cooperative capture budgeted across ticks.
@@ -43,7 +45,8 @@ against the same frozen corpus and environment.
 - [ ] Test several grids and requests concurrently.
 - [ ] Make the benchmark a regression gate.
 - [ ] Run one differential capability/performance corpus against AE2 and
-      Thunderbolt V2 before making comparative performance or quality claims.
+      Thunderbolt V2 before making comparative performance or quality claims;
+      include AE2-VM as the specialized deep-chain/JIT baseline.
 - [ ] Reproduce the Thunderbolt 11-group/33-case reference suite through both
       planners' production entry points, including replay and material modes.
 - [ ] Model alternatives/fuzzy inputs, remainders, catalysts, finite
@@ -59,6 +62,8 @@ against the same frozen corpus and environment.
       probability, mixed resources, split/merge, caches, queues and hostile engines.
 - [ ] Publish a reproducible report with commits, environment, p50/p95/p99,
       allocation, main-thread impact, shortage quality and capability matrix.
+- [ ] Compare cold/warm compilation and cache states separately against AE2-VM,
+      including its known `multi-dag/fibonacci/minimum` false-positive case.
 - [ ] Test the lowest and highest supported AE2 versions.
 
 Gate: a cold request cannot monopolize a server tick, concurrent load remains

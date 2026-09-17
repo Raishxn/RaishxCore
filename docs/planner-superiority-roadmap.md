@@ -81,6 +81,54 @@ O Thunderbolt já está à frente do RaishxCore em cobertura semântica. O
 RaishxCore só poderá alegar superioridade depois de fechar essa diferença e
 vencer nos gates adicionais abaixo.
 
+### 2.4 AE2-VM como terceira referência especializada
+
+Repositório: `https://github.com/TaoLe-si/AE2-VM`. Baseline inspecionada em
+2026-09-16: commit `b03afe75f2f31ff01065ba574a80bb7220a8a237`
+(`v1.10.7`). O AE2-VM passa a integrar a comparação ao lado do Thunderbolt V2
+e do AE2 original, mas com um papel diferente: é a referência de arquitetura
+especializada em cadeias profundas e pedidos gigantes.
+
+Ideias relevantes demonstradas pelo projeto:
+
+- compilação antecipada de patterns para bytecode;
+- VM iterativa de pilha, sem recursão Java;
+- agregação de demanda em DAG compartilhado em vez de expansão por caminho;
+- cache/JIT de bundles de subárvore entre requisições;
+- `BigInteger` interno e fast paths para valores comuns/potências de dois;
+- suporte a catalisadores, feedback, durabilidade, fuzzy, conversões e padrões
+  autorreferentes.
+
+O relatório publicado pelo projeto declara 38/39 resultados corretos no corpus
+expandido derivado do Thunderbolt. A limitação conhecida é um
+`FALSE_POSITIVE` em `multi-dag/fibonacci/minimum`: a seleção heurística de rota
+não encontra a combinação global correta. Esse caso é obrigatório no corpus do
+RaishxCore e deve ser resolvido pelo solver global, nunca mascarado por fallback.
+
+Riscos operacionais observados na baseline inspecionada:
+
+- `CompletableFuture.supplyAsync()` sem executor/fila próprios;
+- ausência de timeout e checkpoints cooperativos no cálculo principal;
+- uma VM sincronizada serializa requisições concorrentes da mesma grid;
+- cache estático por `IGrid`, sem limpeza de lifecycle evidente;
+- fallback espera `nativeFuture.get()` dentro do worker;
+- stack/profundidade possuem limites fixos;
+- mixins obrigatórios e range AE2 mais amplo que a versão demonstrada;
+- conversão final satura valores acima de `Long.MAX_VALUE` na fronteira AE2;
+- ausência de CI e GameTests de lifecycle/múltiplas grids no checkout;
+- reprodução local não foi imediata: `gradle-wrapper.jar` ausente, Java home de
+  Windows fixado e plugin NeoForge não resolvido após os contornos locais.
+
+Esses pontos são constatações da baseline fixada, não acusações sobre versões
+futuras. A comparação sempre deve registrar o commit exato e reavaliar o estado
+do projeto antes de publicar resultados.
+
+O RaishxCore pode adotar como conceitos independentes — sem copiar código — a
+representação intermediária compilada, agregação de DAG, memoização por revisão
+e fast paths algébricos. Deve combiná-los com solver global, replay obrigatório,
+captura incremental, executor limitado, lifecycle, backpressure e zero
+tolerância a falso positivo.
+
 ## 3. Definição objetiva de “muito melhor”
 
 Haverá três níveis de maturidade:
@@ -89,6 +137,8 @@ Haverá três níveis de maturidade:
 
 - todos os 33 casos de referência do Thunderbolt retornam `SUPPORTED` pelo
   caminho de produção do RaishxCore;
+- todo caso correto do corpus publicado pelo AE2-VM permanece correto e seu
+  falso positivo multi-rota conhecido é resolvido;
 - nenhum plano falha no replay de conservação;
 - nenhuma tentativa trava ou ignora cancelamento;
 - resultados são determinísticos entre ordens de registro e seeds de hash;
@@ -117,10 +167,10 @@ Além do Nível B, no corpus diferencial congelado:
 - p95 do tempo no server thread respeita o orçamento de 2 ms por tick por grid
   na configuração de referência;
 - p99 não apresenta cauda descontrolada sob múltiplas grids;
-- mediana geométrica do tempo total é no máximo 75% da baseline Thunderbolt,
-  ou o RaishxCore vence pelo menos 80% dos cenários sem perder mais de 10% nos
-  restantes;
-- bytes alocados/operação são no máximo 80% da baseline no agregado, salvo
+- mediana geométrica do tempo total é no máximo 75% da melhor baseline aplicável
+  entre Thunderbolt V2 e AE2-VM, ou o RaishxCore vence pelo menos 80% dos
+  cenários sem perder mais de 10% nos restantes;
+- bytes alocados/operação são no máximo 80% da melhor baseline aplicável no agregado, salvo
   cenários `BigInteger` acima de `long`, que são relatados separadamente;
 - qualidade de faltantes nunca é pior e é estritamente melhor em pelo menos um
   caso conhecido;
@@ -451,7 +501,31 @@ Adicionar pelo menos:
 - menor/maior versão AE2 suportada;
 - save/reload de job planejado e refund após receita desaparecer.
 
-### 10.3 Três modos e oráculos
+### 10.3 Corpus especializado inspirado no AE2-VM
+
+Adicionar uma trilha própria para medir as áreas em que o AE2-VM é forte:
+
+- Fibonacci profundo com pedidos `10^3`, `10^6` e `10^9`;
+- DAG diamond com subárvores compartilhadas e diferentes níveis de fan-out;
+- cadeia de 24, 32, 128, 2.048 e 20.000 níveis;
+- cold compile, warm compile, cold cache e warm cache separados;
+- repetição do mesmo target com estoque mudando entre requests;
+- invalidação seletiva depois de provider/pattern entrar ou sair;
+- patterns com multiplicadores grandes e potências de dois;
+- comparação de expansão por caminho versus propagação agregada;
+- pico de memória e tamanho do cache após muitos targets distintos;
+- concorrência na mesma grid para verificar serialização/starvation;
+- muitas grids simultâneas para verificar contenção global;
+- pedido acima de `Long.MAX_VALUE`, distinguindo cálculo exato da capacidade da
+  fronteira AE2;
+- reprodução obrigatória de `multi-dag/fibonacci/minimum`, que deve retornar
+  plano correto ou `DECLINE`, nunca falso positivo.
+
+O relatório deve separar tempo de compilação, execução, replay, conversão AE2 e
+cache. Um resultado warm-cache não pode ser comparado com cold-cache do outro
+planner.
+
+### 10.4 Três modos e oráculos
 
 Para cada caso aplicável:
 
@@ -588,10 +662,12 @@ NBT ou referências à grid após lifecycle.
 
 ### Gate D — desempenho diferencial
 
-- [ ] Harness executa RaishxCore, Thunderbolt V2 e AE2 pelo caminho correto.
+- [ ] Harness executa RaishxCore, Thunderbolt V2, AE2-VM e AE2 pelo caminho correto.
 - [ ] Ambiente e commits congelados no relatório.
 - [ ] Critérios do Nível C atendidos.
 - [ ] Benchmark é gate de CI com tolerância estatística documentada.
+- [ ] Cold/warm compile e cold/warm cache são comparados separadamente.
+- [ ] O falso positivo conhecido do AE2-VM é rejeitado ou resolvido corretamente.
 
 ### Gate R — release
 
@@ -609,10 +685,11 @@ comprovada”. Antes disso, a documentação deve usar “em desenvolvimento”,
 
 ### R2.1 — especificação e harness
 
-- congelar corpus Thunderbolt e adapter diferencial;
+- congelar corpus Thunderbolt, corpus AE2-VM e adapters diferenciais;
 - criar replay/oráculo comum;
 - ampliar status e diagnóstico;
-- produzir relatório baseline dos três planners.
+- produzir relatório baseline dos quatro planners: RaishxCore, Thunderbolt V2,
+  AE2-VM e AE2 original.
 
 ### R2.2 — captura cooperativa
 
@@ -681,6 +758,9 @@ comprovada”. Antes disso, a documentação deve usar “em desenvolvimento”,
   engine e política próprios.
 - Superioridade deve ser revalidada quando Thunderbolt, AE2, Java ou o corpus
   mudar. O relatório sempre nomeia a baseline exata comparada.
+- AE2-VM é LGPL-3.0 e deve ser tratado como implementação externa. Usar ideias
+  arquiteturais e cenários comportamentais independentes; qualquer reutilização
+  literal de código exigiria análise e cumprimento explícito da licença.
 
 ## 18. Definition of Done de cada capability
 
