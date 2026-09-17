@@ -68,8 +68,61 @@ public final class CapabilityMatrix {
         }
 
         appendCounts(text, core, reference, claimsA, claimsB);
+        appendShortageQuality(text, core, reference, byA, byB, claimsA, claimsB);
         appendReferenceVerdict(text, core, claimsA, claimsB);
         return text.toString();
+    }
+
+    /**
+     * Shortage quality is where "better" actually means something once both engines can plan a case.
+     * The number is the reported shortage divided by the best shortage the corpus knows, so 1.000 is
+     * optimal and anything above it is a plan that asks the player for more than necessary.
+     */
+    private static void appendShortageQuality(StringBuilder text, Report core, Report reference,
+                                              Map<String, Entry> byA, Map<String, Entry> byB,
+                                              Map<String, CapabilityClaim> claimsA,
+                                              Map<String, CapabilityClaim> claimsB) {
+        text.append("\n== shortage quality on the missing mode (reported / known minimum) ==\n");
+        text.append(String.format(Locale.ROOT, "%-50s %14s %14s%n", "case",
+                core.planner().name(), reference.planner().name()));
+        int mineOptimal = 0;
+        int mineWorse = 0;
+        double worstMine = 0;
+        int theirsOptimal = 0;
+        int theirsWorse = 0;
+        for (String key : new TreeSet<>(byA.keySet())) {
+            if (!key.endsWith("/missing")) continue;
+            CapabilityClaim mine = claimsA.get(key);
+            CapabilityClaim theirs = claimsB.get(key);
+            text.append(String.format(Locale.ROOT, "%-50s %14s %14s%n", key,
+                    overhead(mine), overhead(theirs)));
+            if (mine != null && !Double.isNaN(mine.overhead())) {
+                if (mine.overhead() <= 1.0 + 1e-9) {
+                    mineOptimal++;
+                } else {
+                    mineWorse++;
+                    worstMine = Math.max(worstMine, mine.overhead());
+                }
+            }
+            if (theirs != null && !Double.isNaN(theirs.overhead())) {
+                if (theirs.overhead() <= 1.0 + 1e-9) {
+                    theirsOptimal++;
+                } else {
+                    theirsWorse++;
+                }
+            }
+        }
+        text.append('\n').append(core.planner().name()).append(": optimal on ").append(mineOptimal)
+                .append(", worse than optimal on ").append(mineWorse)
+                .append(String.format(Locale.ROOT, " (worst %.3fx)%n", worstMine));
+        text.append(reference.planner().name()).append(": optimal on ").append(theirsOptimal)
+                .append(", worse than optimal on ").append(theirsWorse).append('\n');
+        text.append("\nA cell is empty when the engine did not report a comparable shortage.\n");
+    }
+
+    private static String overhead(CapabilityClaim claim) {
+        if (claim == null || Double.isNaN(claim.overhead())) return "-";
+        return String.format(Locale.ROOT, "%.3f", claim.overhead());
     }
 
     private static void appendCounts(StringBuilder text, Report core, Report reference,
