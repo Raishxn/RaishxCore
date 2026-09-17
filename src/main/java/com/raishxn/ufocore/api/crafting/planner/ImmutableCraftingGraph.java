@@ -154,23 +154,23 @@ public final class ImmutableCraftingGraph<K> {
                                                       Comparator<? super K> comparator,
                                                       Set<K> routableFirst) {
         // A catalyst is an input the pattern needs even though it is handed back, so the compiled
-        // entry list carries both, with the flag telling the planner which is which. The merge is
-        // built only when there is a catalyst to merge: an extra map per pattern would otherwise be
+        // entry list carries both, with the flag telling the planner which is which. The extra list is
+        // built only when there is a catalyst to merge: an extra list per pattern would otherwise be
         // charged to every graph, including the ones that have no reusable input at all.
-        LinkedHashMap<K, UfoAmount> merged = reusable.isEmpty() ? null : new LinkedHashMap<>(amounts);
-        if (merged != null) {
-            merged.putAll(reusable);
-        }
-        ArrayList<PatternEntry<K>> entries =
-                new ArrayList<>((merged == null ? amounts : merged).size());
-        if (merged == null) {
+        //
+        // A decaying catalyst appears in both maps and must keep both entries. Collapsing them, as a
+        // plain map merge does, silently drops the decay and reports a plan that runs out of catalyst.
+        ArrayList<PatternEntry<K>> entries = new ArrayList<>(amounts.size() + reusable.size());
+        if (reusable.isEmpty()) {
             amounts.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount,
                     durable.containsKey(key) ? EntryKind.DURABLE : EntryKind.EXACT,
                     durable.getOrDefault(key, 0), fuzzy.getOrDefault(key, Set.of()))));
         } else {
-            merged.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount,
-                    reusable.containsKey(key) ? EntryKind.REUSABLE
-                            : durable.containsKey(key) ? EntryKind.DURABLE : EntryKind.EXACT,
+            reusable.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount,
+                    EntryKind.REUSABLE, durable.getOrDefault(key, 0), fuzzy.getOrDefault(key, Set.of()))));
+            amounts.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount,
+                    reusable.containsKey(key) || !durable.containsKey(key)
+                            ? EntryKind.EXACT : EntryKind.DURABLE,
                     durable.getOrDefault(key, 0), fuzzy.getOrDefault(key, Set.of()))));
         }
         entries.sort((left, right) -> {

@@ -83,11 +83,10 @@ public final class CraftingPattern<K> {
                         "an input cannot be both supplied externally and drawn from the plan: " + key);
             }
         }
-        for (K key : this.reusableInputs.keySet()) {
-            if (this.inputs.containsKey(key)) {
-                throw new IllegalArgumentException("input cannot be both consumed and reusable: " + key);
-            }
-        }
+        // A decaying catalyst is deliberately both: the amount that has to be on hand and is handed
+        // back, and the amount each firing uses up. Forbidding the overlap forced a caller to pick one
+        // and silently lose the other, which either promised a plan the world cannot run or demanded
+        // far more material than the loop needs.
         LinkedHashMap<K, Set<K>> variants = new LinkedHashMap<>();
         Objects.requireNonNull(fuzzyVariants, "fuzzyVariants").forEach((key, value) -> {
             Objects.requireNonNull(key, "fuzzy input key");

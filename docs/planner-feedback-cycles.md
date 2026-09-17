@@ -138,6 +138,24 @@ of one and no more.
 The `(n-1)` is not a rounding detail: charging the last turn makes the planner report
 `11 A` where `10` suffices, and the corpus witness pins the minimum, so it would be caught.
 
+## The primitive that carries the formula
+
+`(n-1)·c + d` is `(d - c) + n·c`, which is a catalyst whose working stock is `d - c` and which
+loses `c` per firing. That is expressible as a reusable input of `d - c` plus a consumed input
+of `c` — except that both are the same key, and `CraftingPattern` refused to let a key be
+consumed and reusable at once. A caller had to pick one and silently lose the other: the
+catalyst half promised a batch that eats the working stock it was just approved against, and
+the consumed half demanded a whole working stock per firing.
+
+A decaying catalyst is now a first-class declaration, keeping both entries through compilation
+rather than merging them into one. The presence check also had to change, because it runs
+before the draws and would otherwise read the full stock and wave through a batch that spends
+the very stock it approved; it now demands the working stock and the batch's decay together.
+
+None of this was enough on its own — the component still has to be found and turned into such
+a pattern — but it is the piece the arithmetic was missing, and it is useful on its own for any
+recipe that genuinely consumes part of its catalyst.
+
 ## Measured, before implementing any of it
 
 Declaring both families required without any engine change — the probe that establishes

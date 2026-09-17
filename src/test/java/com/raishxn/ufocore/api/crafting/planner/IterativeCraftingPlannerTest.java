@@ -280,6 +280,61 @@ class IterativeCraftingPlannerTest {
         assertFalse(result.plan().patternExecutions().containsKey(wide));
     }
 
+    /**
+     * A decaying catalyst is both a catalyst and a consumed input under the same key. Eight firings
+     * need two units of working stock plus eight units of decay, not the twenty-four a batch of eight
+     * would cost if each firing had to bring its own working stock.
+     */
+    @Test void aDecayingCatalystCostsItsWorkingStockPlusItsDecay() {
+        var recipe = catalyst("decaying", Map.of("catalyst", amount(1)),
+                Map.of("catalyst", amount(2)), Map.of("product", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(8), Map.of("catalyst", amount(10))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status(),
+                () -> "missing=" + result.plan().missing());
+        assertEquals(amount(8), result.plan().patternExecutions().get(recipe));
+        // The catalyst half is handed back, so only the decay is drawn; the working stock stays.
+        assertEquals(amount(8), result.plan().extractedFromInventory().get("catalyst"));
+        assertEquals(amount(2), result.plan().remaining().get("catalyst"));
+    }
+
+    /** One unit short of working stock plus decay is one unit of shortage, not eight. */
+    @Test void aDecayingCatalystIsShortByTheDecayNotByTheWholeBatch() {
+        var recipe = catalyst("decaying", Map.of("catalyst", amount(1)),
+                Map.of("catalyst", amount(2)), Map.of("product", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(8), Map.of("catalyst", amount(9))));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, result.status());
+        assertEquals(Map.of("catalyst", amount(1)), result.plan().missing());
+    }
+
+    /**
+     * The presence check runs before the draws, so it must see the decay too. Checking only the
+     * working stock would approve a batch that eats into the very stock it just approved.
+     */
+    @Test void aDecayingCatalystCannotSpendTheWorkingStockItWasCheckedAgainst() {
+        var recipe = catalyst("decaying", Map.of("catalyst", amount(3)),
+                Map.of("catalyst", amount(3)), Map.of("product", amount(1)));
+
+        // One firing needs three to stay present and three more to decay: six, not three. A stock of
+        // five is the discriminating value, because the working stock alone is fully present there.
+        var partial = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(1), Map.of("catalyst", amount(5))));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, partial.status());
+        assertEquals(Map.of("catalyst", amount(1)), partial.plan().missing());
+
+        var exactly = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(1), Map.of("catalyst", amount(6))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, exactly.status(),
+                () -> "missing=" + exactly.plan().missing());
+    }
+
     private static CraftingPattern<String> emitted(String id, Map<String, UfoAmount> inputs,
                                                     Map<String, UfoAmount> emittedInputs,
                                                     Map<String, UfoAmount> outputs) {

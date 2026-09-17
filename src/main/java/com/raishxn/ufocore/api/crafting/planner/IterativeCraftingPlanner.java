@@ -311,14 +311,26 @@ public final class IterativeCraftingPlanner<K> {
         List<UfoAmount> outsideDraws = new ArrayList<>();
         List<UfoAmount> feedingDraws = new ArrayList<>();
         UfoAmount selfConsumedPerRun = UfoAmount.ZERO;
+        // A decaying catalyst is declared twice, as a catalyst and as a consumed input. The presence
+        // check below has to demand both at once, because it runs before the draws and would otherwise
+        // see the whole stock and wave through a batch that eats into the catalyst it just approved.
+        Map<K, UfoAmount> consumedPerKey = new HashMap<>();
+        for (PatternEntry<K> input : option.pattern.inputs()) {
+            if (input.reusable() || input.key().equals(key)) continue;
+            UfoAmount drawn = input.durable()
+                    ? multiply(input.amount(), ceil(option.runs, UfoAmount.of(input.uses())))
+                    : multiply(input.amount(), option.runs);
+            consumedPerKey.merge(input.key(), drawn, UfoAmount::add);
+        }
         for (PatternEntry<K> input : option.pattern.inputs()) {
             budget.operation(depth);
             if (input.reusable()) {
                 // A catalyst must be on hand but is handed back, so it is never consumed and no
                 // demand is propagated for it. It is checked once, when the pattern is expanded, so a
                 // catalyst that this same plan would craft only later still reads as missing.
-                state.add(state.missing, input.key(),
-                        state.requirePresent(input.key(), input.amount(), input.variants()));
+                UfoAmount alsoConsumed = consumedPerKey.getOrDefault(input.key(), UfoAmount.ZERO);
+                state.add(state.missing, input.key(), state.requirePresent(input.key(),
+                        input.amount().add(alsoConsumed), input.variants()));
                 continue;
             }
             UfoAmount drawn = input.durable()
