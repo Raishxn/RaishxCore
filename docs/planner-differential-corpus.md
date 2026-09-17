@@ -177,6 +177,15 @@ halves: the selectable view is unchanged, and the request is planned anyway. The
 while chasing a secondary is inherent to the recipe and is reported as overproduction rather than
 hidden.
 
+## Reproducibility
+
+The rendered report used to depend on the JVM: stock maps were built from `Map.of`, whose iteration
+order is randomised per run, and the replay's residue was assembled in the order keys happened to be
+seen. Two runs of the same commit could therefore print the same residue with its keys in a different
+order, which is exactly what a report meant to be frozen cannot do. Both are sorted now, and two runs
+are identical once timings are normalised. Timings are the one thing that cannot be pinned, which is
+why the assertions are on deterministic invariants and the benchmark gates the numbers separately.
+
 ## Shortage quality
 
 Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 19 of
@@ -192,8 +201,8 @@ reported loudly without pretending the plan is invalid.
    (`BigInteger` extremes, wide graphs, item plus fluid, lifecycle cancellation, concurrent grids).
    These are cases inside families already covered, so their value is finding defects rather than
    covering a semantics that is missing.
-2. Freeze the environment for a reproducible differential report. Both reference adapters are behind
-   the same `CapabilityPlanner` contract already; the AE2-VM leg still needs a credential this
+2. Freeze the environment for a differential report: the report is reproducible now, but the
+   reference checkout is not pinned in the artefact and the AE2-VM leg still needs a credential this
    checkout does not have, so only Thunderbolt V2 is measured.
 3. Decide the global-solver question of roadmap phase R2.4, which is the only remaining way to claim
    optimality rather than minimality-on-the-cases-that-were-tried.

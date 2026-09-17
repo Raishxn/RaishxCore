@@ -391,10 +391,16 @@ Timeout do solver deve retornar o melhor plano **já validado** ou `DECLINE`;
 nunca um vetor parcial. Não misturar metade do fast path com metade de outro
 backend sem replay global final.
 
-**Estado:** não iniciado. O que existe é o adaptador de ciclos da Fase 2, que
-resolve a aritmética de um componente mas não otimiza entre rotas, e o
-backtracking local do planner iterativo. Nenhum dos dois reivindica o ótimo
-global, e o doc de classe do `IterativeCraftingPlanner` continua dizendo isso.
+**Estado:** não iniciado como solver. O que existe é o adaptador de ciclos da Fase 2, que resolve a
+aritmética de um componente mas não otimiza entre rotas, e o backtracking local do planner
+iterativo. Nenhum dos dois reivindica o ótimo global, e o doc de classe do `IterativeCraftingPlanner`
+continua dizendo isso.
+
+Um objetivo da lista já é respeitado, o de sobreprodução: entre rotas de mesmo custo e mesmo número
+de execuções, quem decide agora é a que sobra menos, e não o identificador. A chave usada é
+`(runs, rendimento)`, que ordena por sobra exatamente porque a demanda é a mesma para todos os
+candidatos daquela chamada, e ambas já estavam em mãos — a primeira tentativa guardou a sobra num
+campo novo e o gate de alocação pegou 21 % de regressão em `sibling_conflict`.
 
 ### Fase 5 — ciclos e feedback
 

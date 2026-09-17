@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Common replay oracle for the differential corpus.
@@ -277,7 +278,9 @@ public final class CapabilityPlanReplay {
             }
         }
 
-        LinkedHashMap<String, UfoAmount> leftover = new LinkedHashMap<>(crafted.snapshot());
+        // Sorted, not insertion-ordered: this ends up in the rendered report, and a report whose key
+        // order depends on which pool happened to see a key first cannot be compared between runs.
+        TreeMap<String, UfoAmount> leftover = new TreeMap<>(crafted.snapshot());
         consumable.snapshot().forEach((key, amount) -> addInto(leftover, key, amount));
         if (plan.complete() && !leftover.equals(plan.remaining())) {
             failures.add("replayed residue " + leftover + " differs from declared " + plan.remaining());

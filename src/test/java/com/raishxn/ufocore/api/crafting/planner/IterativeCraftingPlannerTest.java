@@ -335,6 +335,27 @@ class IterativeCraftingPlannerTest {
                 () -> "missing=" + exactly.plan().missing());
     }
 
+    /**
+     * Two routes, one execution each and the same input, differing only in how much they overshoot.
+     * The objective order in the roadmap puts overproduction after execution count and before the
+     * identifier tie-break, so the tighter recipe is the better plan.
+     */
+    @Test void prefersTheRouteThatOvershootsLess() {
+        var overshoot = pattern("a-overshoot", Map.of("s", amount(1)), Map.of("A", amount(5)));
+        var tight = pattern("b-tight", Map.of("s", amount(1)), Map.of("A", amount(3)));
+        var x = pattern("x", Map.of("A", amount(3)), Map.of("X", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(overshoot, tight, x)),
+                new PlanningRequest<>("X", amount(1), Map.of("s", amount(6))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status());
+        assertEquals(UfoAmount.ONE, result.plan().patternExecutions().get(tight),
+                () -> "executions=" + result.plan().patternExecutions());
+        assertFalse(result.plan().patternExecutions().containsKey(overshoot),
+                () -> "executions=" + result.plan().patternExecutions());
+        assertEquals(amount(0), result.plan().quality().overproducedUnits());
+    }
+
     private static CraftingPattern<String> emitted(String id, Map<String, UfoAmount> inputs,
                                                     Map<String, UfoAmount> emittedInputs,
                                                     Map<String, UfoAmount> outputs) {

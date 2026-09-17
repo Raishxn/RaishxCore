@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.Function;
 
 /**
@@ -555,8 +556,14 @@ public final class CapabilityCorpus {
         return entries;
     }
 
+    /**
+     * Sorted rather than insertion-ordered, and fed from sorted rather than from {@code Map.of}. The
+     * iteration order of {@code Map.of} is randomised per JVM run, so a stock map built from one made
+     * the corpus inputs differ between runs, and with them the rendered report. The report is meant to
+     * be a frozen artefact, so nothing that feeds it may depend on a salt.
+     */
     private static Map<String, UfoAmount> amounts(Map<String, Long> values) {
-        LinkedHashMap<String, UfoAmount> result = new LinkedHashMap<>();
+        TreeMap<String, UfoAmount> result = new TreeMap<>();
         values.forEach((key, value) -> result.put(key, UfoAmount.of(value)));
         return result;
     }

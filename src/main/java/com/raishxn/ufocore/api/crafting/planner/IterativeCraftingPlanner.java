@@ -473,6 +473,15 @@ public final class IterativeCraftingPlanner<K> {
                 .thenComparingInt(option -> option.rank)
                 .thenComparing(option -> option.deficit)
                 .thenComparing(option -> option.cost)
+                // Two routes can cost the same and fire the same number of times while one leaves
+                // material behind. The roadmap puts overproduction after the execution count and
+                // before the identifier, so without this the identifier decided it and a plan could
+                // carry avoidable surplus because its recipe happened to sort first. Overshoot is
+                // runs times yield less the demand, and the demand is the same for every candidate
+                // here, so ordering by runs and then by yield orders by overshoot exactly, without
+                // computing it: the two keys are already on hand and both are needed anyway.
+                .thenComparing(option -> option.runs)
+                .thenComparing(option -> option.pattern.outputAmount(key))
                 .thenComparing(option -> option.pattern.pattern().id())
                 .thenComparing(option -> option.runs, Comparator.reverseOrder());
         options.sort((left, right) -> { budget.operation(0); return order.compare(left, right); });
