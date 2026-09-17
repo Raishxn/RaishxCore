@@ -409,17 +409,17 @@ public final class CapabilityCorpus {
         addScenario(out, "fuzzy/variant-route", CapabilityFamily.FUZZY_VARIANT, 1_000,
                 CapabilityMaterialMode.MISSING, fuzzyGraph(patterns, host, Map.of()), "product",
                 UfoAmount.of(1_000), false, List.of(amounts(Map.of("logical_tool", 1L))), semantics,
-                CapabilityExpectation.LIMITATION,
+                CapabilityExpectation.REQUIRED,
                 supplied -> fuzzyGraph(patterns, host, supplied));
         addScenario(out, "fuzzy/variant-route", CapabilityFamily.FUZZY_VARIANT, 1_000,
                 CapabilityMaterialMode.MINIMUM, fuzzyGraph(patterns, host, minimum), "product",
                 UfoAmount.of(1_000), true, List.of(), semantics,
-                CapabilityExpectation.LIMITATION,
+                CapabilityExpectation.REQUIRED,
                 supplied -> fuzzyGraph(patterns, host, merge(minimum, supplied)));
         addScenario(out, "fuzzy/variant-route", CapabilityFamily.FUZZY_VARIANT, 1_000,
                 CapabilityMaterialMode.UNBOUNDED, fuzzyGraph(patterns, host, unbounded), "product",
                 UfoAmount.of(1_000), true, List.of(), semantics,
-                CapabilityExpectation.LIMITATION,
+                CapabilityExpectation.REQUIRED,
                 supplied -> fuzzyGraph(patterns, host, merge(unbounded, supplied)));
     }
 

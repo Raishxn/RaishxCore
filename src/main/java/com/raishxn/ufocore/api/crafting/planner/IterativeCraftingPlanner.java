@@ -313,7 +313,8 @@ public final class IterativeCraftingPlanner<K> {
                 // A catalyst must be on hand but is handed back, so it is never consumed and no
                 // demand is propagated for it. It is checked once, when the pattern is expanded, so a
                 // catalyst that this same plan would craft only later still reads as missing.
-                state.add(state.missing, input.key(), state.requirePresent(input.key(), input.amount()));
+                state.add(state.missing, input.key(),
+                        state.requirePresent(input.key(), input.amount(), input.variants()));
                 continue;
             }
             UfoAmount drawn = input.durable()
@@ -340,7 +341,10 @@ public final class IterativeCraftingPlanner<K> {
             boolean cycle = false;
             for (PatternEntry<K> input : pattern.inputs()) {
                 budget.operation(0);
-                UfoAmount available = state.available(input.key());
+                // A fuzzy slot is satisfied by any variant it accepts, so presence is their total.
+                UfoAmount available = input.reusable() && !input.variants().isEmpty()
+                        ? state.availableAcross(input.variants())
+                        : state.available(input.key());
                 // A catalyst is required once and handed back; a durable carrier is consumed but one
                 // unit survives several firings, so neither scales with the run count the way an
                 // ordinary input does.
@@ -481,7 +485,25 @@ public final class IterativeCraftingPlanner<K> {
         }
         /** How much of {@code key} is missing for it to be present at all. Consumes nothing. */
         UfoAmount requirePresent(K key, UfoAmount amount) {
-            return amount.subtractClamped(available(key));
+            return requirePresent(key, amount, Set.of());
+        }
+
+        /** Availability summed across every key a fuzzy slot accepts. */
+        UfoAmount availableAcross(Set<K> variants) {
+            UfoAmount total = UfoAmount.ZERO;
+            for (K variant : variants) {
+                total = total.add(available(variant));
+            }
+            return total;
+        }
+
+        /**
+         * The same, for a slot any of {@code variants} may satisfy: a logical tool accepts a damaged
+         * one, so presence is the total across everything the slot accepts.
+         */
+        UfoAmount requirePresent(K key, UfoAmount amount, Set<K> variants) {
+            UfoAmount present = variants.isEmpty() ? available(key) : availableAcross(variants);
+            return amount.subtractClamped(present);
         }
         UfoAmount consume(K key, UfoAmount amount) {
             UfoAmount surplus = crafted.getOrDefault(key, UfoAmount.ZERO);

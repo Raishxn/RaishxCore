@@ -117,22 +117,27 @@ class CapabilityPlanReplayTest {
                 () -> "expected an unused-material finding, got " + report.findings());
     }
 
-    @Test void replaysCatalystsButRefusesSemanticsItCannotReExecute() {
+    @Test void replaysCatalystsAndFuzzySlotsButRefusesWhatItCannotReExecute() {
         CapabilityGraph catalyst = new CapabilityGraph(List.of(CapabilityPattern.of("catalyst",
                 List.of(CapabilityInput.reusable("seed", 1, "host")),
                 List.of(CapabilityOutput.primary("out", 1)))), Map.of());
         CapabilityGraph fuzzy = new CapabilityGraph(List.of(CapabilityPattern.of("fuzzy",
                 List.of(CapabilityInput.fuzzy("logical", 1, "host", List.of("logical", "variant"))),
                 List.of(CapabilityOutput.primary("out", 1)))), Map.of());
+        CapabilityGraph emitter = new CapabilityGraph(List.of(CapabilityPattern.of("emitted",
+                List.of(CapabilityInput.emitter("flux", 10, "source")),
+                List.of(CapabilityOutput.primary("out", 1)))), Map.of());
         CapabilityGraph probabilistic = new CapabilityGraph(List.of(CapabilityPattern.of("chance",
                 List.of(CapabilityInput.exact("ore", 1)),
                 List.of(CapabilityOutput.primary("out", 1),
                         CapabilityOutput.probabilistic("extra", 1)))), Map.of());
 
-        // A catalyst is replayable: the oracle checks the seed is present and hands it back rather
-        // than drawing it, so a plan that uses one can be verified like any other.
+        // A catalyst and a fuzzy slot are both replayable: the oracle checks the accepted keys are
+        // present and hands them back rather than drawing them, so a plan using either can be
+        // verified like any other.
         assertTrue(CapabilityPlanReplay.isReplayable(catalyst));
-        assertFalse(CapabilityPlanReplay.isReplayable(fuzzy));
+        assertTrue(CapabilityPlanReplay.isReplayable(fuzzy));
+        assertFalse(CapabilityPlanReplay.isReplayable(emitter));
         assertFalse(CapabilityPlanReplay.isReplayable(probabilistic));
     }
 

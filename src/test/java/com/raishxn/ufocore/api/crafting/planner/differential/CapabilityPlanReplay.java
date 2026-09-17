@@ -113,7 +113,7 @@ public final class CapabilityPlanReplay {
             for (CapabilityInput input : pattern.inputs()) {
                 // A catalyst is never consumed, so it is not demand: the seed stays in remaining, and
                 // that is what the balance below expects to find there.
-                if (input.kind() == CapabilityInput.Kind.REUSABLE) continue;
+                if (presenceOnly(input)) continue;
                 addInto(demand, input.key(), draw(input, entry.getValue()));
             }
             for (CapabilityOutput output : pattern.outputs()) {
@@ -129,7 +129,7 @@ public final class CapabilityPlanReplay {
         Set<String> flowing = new LinkedHashSet<>();
         for (CapabilityPattern pattern : graph.patterns()) {
             for (CapabilityInput input : pattern.inputs()) {
-                if (input.kind() == CapabilityInput.Kind.REUSABLE) {
+                if (presenceOnly(input)) {
                     catalystsOnly.add(input.key());
                 } else {
                     flowing.add(input.key());
@@ -184,12 +184,16 @@ public final class CapabilityPlanReplay {
             }
             executedRuns = executedRuns.add(step.runs());
             for (CapabilityInput input : pattern.inputs()) {
-                if (input.kind() == CapabilityInput.Kind.REUSABLE) {
+                if (presenceOnly(input)) {
                     // Presence once, drawn never: one seed serves every execution and must still be
-                    // in its pool after the step.
-                    UfoAmount present = crafted.get(input.key())
-                            .add(consumable.get(input.key()))
-                            .add(injected.get(input.key()));
+                    // in its pool after the step. A fuzzy slot is satisfied by any accepted variant,
+                    // so presence is their total.
+                    UfoAmount present = UfoAmount.ZERO;
+                    for (String accepted : acceptedKeys(input)) {
+                        present = present.add(crafted.get(accepted))
+                                .add(consumable.get(accepted))
+                                .add(injected.get(accepted));
+                    }
                     if (present.compareTo(input.amount()) < 0) {
                         failures.add(supplyReportedMissing
                                 ? "reported shortage is insufficient for catalyst " + input.key()
@@ -316,9 +320,21 @@ public final class CapabilityPlanReplay {
         return pattern.inputs().stream().allMatch(input ->
                         input.kind() == CapabilityInput.Kind.EXACT
                                 || input.kind() == CapabilityInput.Kind.REUSABLE
-                                || input.kind() == CapabilityInput.Kind.FINITE_USE)
+                                || input.kind() == CapabilityInput.Kind.FINITE_USE
+                                || input.kind() == CapabilityInput.Kind.FUZZY)
                 && pattern.outputs().stream().noneMatch(output ->
                         output.kind() == CapabilityOutput.Kind.PROBABILISTIC);
+    }
+
+    /** The keys that may satisfy a slot: any accepted variant for a fuzzy one, else just its key. */
+    private static List<String> acceptedKeys(CapabilityInput input) {
+        return input.kind() == CapabilityInput.Kind.FUZZY ? input.alternatives() : List.of(input.key());
+    }
+
+    /** True when a slot is required to be present and is never drawn. */
+    private static boolean presenceOnly(CapabilityInput input) {
+        return input.kind() == CapabilityInput.Kind.REUSABLE
+                || input.kind() == CapabilityInput.Kind.FUZZY;
     }
 
     /**

@@ -13,6 +13,7 @@ public final class CraftingPattern<K> {
     private final int priority;
     private final Map<K, UfoAmount> inputs;
     private final Map<K, UfoAmount> reusableInputs;
+    private final Map<K, Set<K>> fuzzyVariants;
     private final Map<K, Integer> durableUses;
     private final Map<K, UfoAmount> outputs;
     private final Set<K> craftableOutputs;
@@ -34,7 +35,7 @@ public final class CraftingPattern<K> {
     public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs,
                             Map<K, UfoAmount> reusableInputs, Map<K, UfoAmount> outputs,
                             Set<K> craftableOutputs) {
-        this(id, priority, inputs, reusableInputs, Map.of(), outputs, craftableOutputs);
+        this(id, priority, inputs, reusableInputs, Map.of(), Map.of(), outputs, craftableOutputs);
     }
 
     /**
@@ -45,6 +46,17 @@ public final class CraftingPattern<K> {
     public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs,
                             Map<K, UfoAmount> reusableInputs, Map<K, Integer> durableUses,
                             Map<K, UfoAmount> outputs, Set<K> craftableOutputs) {
+        this(id, priority, inputs, reusableInputs, durableUses, Map.of(), outputs, craftableOutputs);
+    }
+    /**
+     * @param fuzzyVariants a reusable input that any of several concrete variants may satisfy, such
+     *                      as a logical tool slot accepting a damaged one; the logical key must also
+     *                      appear in {@code reusableInputs} with the amount the slot needs
+     */
+    public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs,
+                            Map<K, UfoAmount> reusableInputs, Map<K, Integer> durableUses,
+                            Map<K, Set<K>> fuzzyVariants, Map<K, UfoAmount> outputs,
+                            Set<K> craftableOutputs) {
         this.id = Objects.requireNonNull(id, "id");
         if (id.isBlank()) throw new IllegalArgumentException("pattern id must not be blank");
         this.priority = priority;
@@ -55,6 +67,20 @@ public final class CraftingPattern<K> {
                 throw new IllegalArgumentException("input cannot be both consumed and reusable: " + key);
             }
         }
+        LinkedHashMap<K, Set<K>> variants = new LinkedHashMap<>();
+        Objects.requireNonNull(fuzzyVariants, "fuzzyVariants").forEach((key, value) -> {
+            Objects.requireNonNull(key, "fuzzy input key");
+            if (!this.reusableInputs.containsKey(key)) {
+                throw new IllegalArgumentException("fuzzy input must be a reusable input: " + key);
+            }
+            Set<K> accepted = Set.copyOf(Objects.requireNonNull(value, "variants"));
+            if (accepted.isEmpty() || !accepted.contains(key)) {
+                throw new IllegalArgumentException(
+                        "fuzzy input must accept its own logical key plus any variants: " + key);
+            }
+            variants.put(key, accepted);
+        });
+        this.fuzzyVariants = Collections.unmodifiableMap(variants);
         LinkedHashMap<K, Integer> uses = new LinkedHashMap<>();
         Objects.requireNonNull(durableUses, "durableUses").forEach((key, value) -> {
             Objects.requireNonNull(key, "durable input key");
@@ -86,6 +112,8 @@ public final class CraftingPattern<K> {
     public Map<K, UfoAmount> reusableInputs() { return reusableInputs; }
     /** Firings one carrier of a consumed input survives; absent means it is consumed outright. */
     public Map<K, Integer> durableUses() { return durableUses; }
+    /** Concrete variants a reusable input accepts, including the logical key itself. */
+    public Map<K, Set<K>> fuzzyVariants() { return fuzzyVariants; }
     public Map<K, UfoAmount> outputs() { return outputs; }
     /** Outputs selectable as a crafting route; other outputs remain usable byproducts. */
     public Set<K> craftableOutputs() { return craftableOutputs; }
@@ -105,12 +133,13 @@ public final class CraftingPattern<K> {
     @Override public boolean equals(Object object) {
         return object instanceof CraftingPattern<?> other && id.equals(other.id) && priority == other.priority
                 && inputs.equals(other.inputs) && reusableInputs.equals(other.reusableInputs)
-                && durableUses.equals(other.durableUses) && outputs.equals(other.outputs)
-                && craftableOutputs.equals(other.craftableOutputs);
+                && fuzzyVariants.equals(other.fuzzyVariants) && durableUses.equals(other.durableUses)
+                && outputs.equals(other.outputs) && craftableOutputs.equals(other.craftableOutputs);
     }
 
     @Override public int hashCode() {
-        return Objects.hash(id, priority, inputs, reusableInputs, durableUses, outputs, craftableOutputs);
+        return Objects.hash(id, priority, inputs, reusableInputs, fuzzyVariants, durableUses, outputs,
+                craftableOutputs);
     }
     @Override public String toString() { return id; }
 }

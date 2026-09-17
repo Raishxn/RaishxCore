@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -188,6 +189,38 @@ class IterativeCraftingPlannerTest {
                 () -> "two carriers cover twenty firings, so five more need one more carrier");
     }
 
+    @Test void aFuzzySlotIsSatisfiedByAnyAcceptedVariant() {
+        var recipe = fuzzy("product", Map.of("logical_tool", amount(1)),
+                Map.of("logical_tool", Set.of("logical_tool", "damaged_tool")), Map.of("product", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(100), Map.of("damaged_tool", amount(1))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status(),
+                () -> "missing=" + result.plan().missing());
+        assertEquals(amount(100), result.plan().patternExecutions().get(recipe));
+        // The slot is a tool, so whichever variant fills it is never drawn.
+        assertFalse(result.plan().extractedFromInventory().containsKey("damaged_tool"));
+    }
+
+    @Test void aFuzzySlotWithNoAcceptedVariantReportsTheLogicalKey() {
+        var recipe = fuzzy("product", Map.of("logical_tool", amount(1)),
+                Map.of("logical_tool", Set.of("logical_tool", "damaged_tool")), Map.of("product", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(100), Map.of()));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, result.status());
+        assertEquals(amount(1), result.plan().missing().get("logical_tool"),
+                () -> "the slot is reported by its logical key, not by one of its variants");
+    }
+
+    private static CraftingPattern<String> fuzzy(String id, Map<String, UfoAmount> reusableInputs,
+                                                  Map<String, Set<String>> variants,
+                                                  Map<String, UfoAmount> outputs) {
+        return new CraftingPattern<>(id, 0, Map.of(), reusableInputs, Map.of(), variants, outputs,
+                outputs.keySet());
+    }
     private static CraftingPattern<String> durable(String id, Map<String, UfoAmount> inputs,
                                                     Map<String, Integer> durableUses,
                                                     Map<String, UfoAmount> outputs) {

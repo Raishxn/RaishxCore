@@ -138,8 +138,9 @@ public final class ImmutableCraftingGraph<K> {
     private static <K> CompiledPattern<K> compile(CraftingPattern<K> pattern,
                                                    Comparator<? super K> comparator, Set<K> routable) {
         return new CompiledPattern<>(pattern,
-                entries(pattern.inputs(), pattern.reusableInputs(), pattern.durableUses(), comparator, routable),
-                entries(pattern.outputs(), Map.of(), Map.of(), comparator, null));
+                entries(pattern.inputs(), pattern.reusableInputs(), pattern.durableUses(),
+                        pattern.fuzzyVariants(), comparator, routable),
+                entries(pattern.outputs(), Map.of(), Map.of(), Map.of(), comparator, null));
     }
 
     /**
@@ -149,6 +150,7 @@ public final class ImmutableCraftingGraph<K> {
     private static <K> List<PatternEntry<K>> entries(Map<K, UfoAmount> amounts,
                                                       Map<K, UfoAmount> reusable,
                                                       Map<K, Integer> durable,
+                                                      Map<K, Set<K>> fuzzy,
                                                       Comparator<? super K> comparator,
                                                       Set<K> routableFirst) {
         // A catalyst is an input the pattern needs even though it is handed back, so the compiled
@@ -164,12 +166,12 @@ public final class ImmutableCraftingGraph<K> {
         if (merged == null) {
             amounts.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount,
                     durable.containsKey(key) ? EntryKind.DURABLE : EntryKind.EXACT,
-                    durable.getOrDefault(key, 0))));
+                    durable.getOrDefault(key, 0), fuzzy.getOrDefault(key, Set.of()))));
         } else {
             merged.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount,
                     reusable.containsKey(key) ? EntryKind.REUSABLE
                             : durable.containsKey(key) ? EntryKind.DURABLE : EntryKind.EXACT,
-                    durable.getOrDefault(key, 0))));
+                    durable.getOrDefault(key, 0), fuzzy.getOrDefault(key, Set.of()))));
         }
         entries.sort((left, right) -> {
             if (routableFirst != null) {
@@ -192,9 +194,9 @@ public final class ImmutableCraftingGraph<K> {
         DURABLE
     }
 
-    record PatternEntry<K>(K key, UfoAmount amount, EntryKind kind, int uses) {
+    record PatternEntry<K>(K key, UfoAmount amount, EntryKind kind, int uses, Set<K> variants) {
         PatternEntry(K key, UfoAmount amount) {
-            this(key, amount, EntryKind.EXACT, 0);
+            this(key, amount, EntryKind.EXACT, 0, Set.of());
         }
 
         boolean reusable() {

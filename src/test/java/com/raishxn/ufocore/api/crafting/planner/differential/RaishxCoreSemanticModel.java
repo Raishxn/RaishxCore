@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,7 +37,8 @@ public final class RaishxCoreSemanticModel {
             CapabilitySemantics.BATCHING,
             CapabilitySemantics.MULTI_ROUTE,
             CapabilitySemantics.REUSABLE_INPUT,
-            CapabilitySemantics.FINITE_DURABILITY));
+            CapabilitySemantics.FINITE_DURABILITY,
+            CapabilitySemantics.FUZZY_ALTERNATIVES));
 
     private RaishxCoreSemanticModel() {
     }
@@ -108,6 +110,7 @@ public final class RaishxCoreSemanticModel {
         LinkedHashMap<String, UfoAmount> inputs = new LinkedHashMap<>();
         LinkedHashMap<String, UfoAmount> reusable = new LinkedHashMap<>();
         LinkedHashMap<String, Integer> durable = new LinkedHashMap<>();
+        LinkedHashMap<String, Set<String>> fuzzy = new LinkedHashMap<>();
         for (CapabilityInput input : pattern.inputs()) {
             switch (input.kind()) {
                 case EXACT -> inputs.merge(input.key(), input.amount(), UfoAmount::add);
@@ -116,6 +119,15 @@ public final class RaishxCoreSemanticModel {
                     // A durable carrier is an ordinary input that survives a number of firings.
                     inputs.merge(input.key(), input.amount(), UfoAmount::add);
                     durable.merge(input.key(), input.uses(), Integer::max);
+                }
+                case FUZZY -> {
+                    // A logical slot any listed variant may fill, held as a reusable seed.
+                    reusable.merge(input.key(), input.amount(), UfoAmount::add);
+                    fuzzy.merge(input.key(), Set.copyOf(input.alternatives()), (left, right) -> {
+                        LinkedHashSet<String> merged = new LinkedHashSet<>(left);
+                        merged.addAll(right);
+                        return Set.copyOf(merged);
+                    });
                 }
                 default -> throw new UnsupportedSemantics(
                         "pattern " + pattern.id() + " needs " + input.kind() + " input " + input.key());
@@ -129,7 +141,7 @@ public final class RaishxCoreSemanticModel {
             }
             outputs.merge(output.key(), output.amount(), UfoAmount::add);
         }
-        return new CraftingPattern<>(pattern.id(), pattern.priority(), inputs, reusable, durable, outputs,
-                pattern.craftableOutputs());
+        return new CraftingPattern<>(pattern.id(), pattern.priority(), inputs, reusable, durable, fuzzy,
+                outputs, pattern.craftableOutputs());
     }
 }
