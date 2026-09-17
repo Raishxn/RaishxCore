@@ -335,8 +335,15 @@ public final class IterativeCraftingPlanner<K> {
                 // demand is propagated for it. It is checked once, when the pattern is expanded, so a
                 // catalyst that this same plan would craft only later still reads as missing.
                 UfoAmount alsoConsumed = consumedPerKey.getOrDefault(input.key(), UfoAmount.ZERO);
+                // Only the working stock is charged once for the whole plan; the decay is charged every
+                // time, because it really is consumed every time.
+                UfoAmount working = input.amount()
+                        .subtractClamped(state.presence.getOrDefault(input.key(), UfoAmount.ZERO));
+                if (!working.isZero()) {
+                    state.put(state.presence, input.key(), input.amount());
+                }
                 state.add(state.missing, input.key(), state.requirePresent(input.key(),
-                        input.amount().add(alsoConsumed), input.variants()));
+                        working.add(alsoConsumed), input.variants()));
                 continue;
             }
             UfoAmount drawn = input.durable()
@@ -556,6 +563,13 @@ public final class IterativeCraftingPlanner<K> {
         final Map<K, UfoAmount> crafted;
         final Map<K, UfoAmount> extracted;
         final Map<K, UfoAmount> missing;
+        /**
+         * Working stock already demanded of each catalyst. A catalyst is handed back, so one unit
+         * covers every firing of its recipe; a plan that expands the same recipe in two steps, as it
+         * does when a secondary output is chased separately from the primary, must not be charged for
+         * the same catalyst twice.
+         */
+        final Map<K, UfoAmount> presence = new HashMap<>();
         final Map<CraftingPattern<K>, UfoAmount> executions = new TreeMap<>(Comparator.comparing(CraftingPattern::id));
         final Set<K> active = new HashSet<>();
         final ArrayList<CraftingPlan.Execution<K>> schedule = new ArrayList<>();

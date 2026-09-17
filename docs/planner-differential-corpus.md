@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-19 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 57 cases.
+20 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 60 cases.
 
-Representable today and therefore `REQUIRED`, 57 cases:
+Representable today and therefore `REQUIRED`, 60 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -96,6 +96,7 @@ Representable today and therefore `REQUIRED`, 57 cases:
 | `catalyst/raw-feedback-loop` | a loop that returns its catalyst in full |
 | `catalyst/lossy-feedback-loop` | a loop that loses a fixed amount per turn |
 | `catalyst/returned-seed` | a declared catalyst, present once and handed back |
+| `catalyst/secondary-through-catalyst` | a secondary chased through a recipe carrying a catalyst |
 | `durability/finite-use-chain` | a carrier that survives a limited number of firings |
 | `fuzzy/variant-route` | a slot any of several variants may satisfy |
 | `emitter/authorized-stream` | an input an authorized external source supplies |
@@ -159,6 +160,7 @@ overhead above one on a required case. They are printed so they cannot be overlo
 
 | Cases | Was | Cause and fix |
 | --- | --- | --- |
+| `catalyst/secondary-through-catalyst/missing` | `missingOverhead` 1.200 | A catalyst was charged once per *expansion* of its recipe rather than once per plan. Chasing a secondary output separately from the primary expands the same recipe twice, so the presence check ran twice and demanded two catalysts when one is handed back and covers both. `State` now records the working stock already demanded and charges only the decay again. |
 | `byproduct/shared-coproduct/{minimum,unbounded}`, `byproduct/feeds-later-stage/{minimum,unbounded}` | `FALSE_NEGATIVE` | A demanded coproduct was resolved before the sibling route that produces it, so a composite whose coproduct key sorts before its routable keys reported an impossible shortage. `ImmutableCraftingGraph` now orders each pattern's inputs so that an input with a selectable route is resolved before an input that can only be collected as a deterministic coproduct. |
 
 The same cause also inflated the `MISSING` modes of those two groups to `missingOverhead` 2.0 and
@@ -197,7 +199,7 @@ why the assertions are on deterministic invariants and the benchmark gates the n
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 19 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 20 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.

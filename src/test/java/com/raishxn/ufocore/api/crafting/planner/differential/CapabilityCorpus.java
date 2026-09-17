@@ -69,6 +69,7 @@ public final class CapabilityCorpus {
         addDeepChain(scenarios);
         addConversionRing(scenarios);
         addSurplusSecondaryDemand(scenarios);
+        addSecondaryThroughCatalyst(scenarios);
         addChanceRoute(scenarios);
         addSelfGrowth(scenarios);
         addRawFeedbackLoop(scenarios);
@@ -309,6 +310,32 @@ public final class CapabilityCorpus {
      * complete; the guaranteed answer is that eight {@code ore} are missing, because a chance route
      * promises nothing to a deterministic request.
      */
+    /**
+     * The same secondary-demand shape reached through a recipe that also carries a catalyst. The
+     * fallback route is new and the exotic input kinds are not, so this is where they meet: a catalyst
+     * is present once and handed back no matter how many times its recipe fires, including the extra
+     * firings that exist only to yield the secondary.
+     */
+    private static void addSecondaryThroughCatalyst(List<CapabilityScenario> out) {
+        Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
+                CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.REUSABLE_INPUT);
+        Map<String, UfoAmount> minimum = amounts(Map.of("ore", 4L, "catalyst", 1L));
+        threeModes(out, "catalyst/secondary-through-catalyst", CapabilityFamily.REUSABLE_CATALYST, 4,
+                "finished", UfoAmount.ONE, minimum, Map.of(),
+                List.of(amounts(Map.of("ore", 4L, "catalyst", 1L))), true, semantics,
+                CapabilityExpectation.REQUIRED, CapabilityCorpus::secondaryThroughCatalyst);
+    }
+
+    private static CapabilityGraph secondaryThroughCatalyst(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("refine",
+                        List.of(CapabilityInput.reusable("catalyst", 1, "refine"), input("ore", 1)),
+                        List.of(primary("bloom", 1), byproduct("slag", 1))),
+                CapabilityPattern.of("assemble", List.of(input("bloom", 1), input("slag", 4)),
+                        List.of(primary("finished", 1))));
+        return graph(patterns, stock);
+    }
+
     /**
      * The target needs four of a secondary output but only one of the primary. Collecting the
      * secondary only when the primary is wanted for its own sake yields one, so the producing pattern
