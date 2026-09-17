@@ -27,7 +27,8 @@ here is part of the runtime JAR and nothing here imports production classes from
 | `CapabilityGraph.CapabilityStock.Kind` | `CONSUMABLE`, `REUSABLE`, `EMITTED` |
 | `CapabilitySemantics` | Behaviour a scenario requires from an engine |
 | `CapabilityScenario` | One case: graph, material mode, expectation, minimum witness, refill |
-| `CapabilityCorpus` | The 17 groups and their three material modes |
+| `CapabilityCorpus` | The 27 groups and their three material modes |
+| `MissingShortageOracle` | Independent exact minimum of the weighted shortage, by bounded enumeration over the neutral model; never calls the planner |
 | `CapabilityPlanReplay` | The common oracle |
 | `RaishxCoreSemanticModel` | Which semantics the current model claims, and the lowering |
 | `RaishxCoreCapabilityPlanner` | Runs the corpus through the production planner API |
@@ -161,11 +162,21 @@ is trying to avoid.
 
 The engine takes whole-number weights rather than fractions, so the comparison stays exact and the
 plan stays reproducible, and a weight of one is not stored at all. That last part is what keeps the
-promise that a request declaring no weights behaves exactly as it did before weights existed: on the
-benchmark's own conflict case the allocation is byte-identical either way, `20248` before and after.
+promise that a request declaring no weights behaves exactly as it did before weights existed: the
+planner sees the constant empty map and allocates no weight structure at all, so the unweighted path is
+the same code it always was. The benchmark's own conflict case is the standing check that the
+unweighted cost did not move: `plannerBenchmark` compares it against the recorded
+`src/benchmark/baseline/planner-baseline.csv` on every build.
 
-Weights are not yet supplied by the bridge. Nothing in AE2 says what a material is worth, so wiring
-them to provider priorities is still open; the API and the proof are what landed.
+The bridge now supplies them, but only from a consumer that declares them. Nothing in AE2 says what a
+material is worth, so the Core derives no value: a consumer registers exact integer weights per
+serialized key through the `MissingWeights` API, and the operator scales or overrides them from
+`raishxcore/core.toml` (`planner.missingWeights.multiplier` and `planner.missingWeights.overrides`)
+without recompiling either side. The bridge joins the two once per request and hands the result to every
+attempt. With nothing registered and nothing configured the effective map is the constant empty map, so
+the unweighted path is unchanged; the benchmark's own conflict case is the byte-for-byte check of that.
+The corpus still declares its weights directly on the scenario, because it is the independent
+specification and must not depend on the consumer registry.
 
 ## Carriers are per pattern
 
@@ -269,6 +280,15 @@ multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the ca
 An overhead above one on a required case stays advisory rather than fatal, so a regression here is
 reported loudly without pretending the plan is invalid.
 
+The minimum is no longer only a number somebody wrote down. `MissingShortageOracle` computes it
+independently, by bounded enumeration over the neutral model split into small components, and never
+calls the planner. One test checks every declared witness against that computed minimum for all 27
+MISSING cases, and another checks the engine's reported shortage against it, so "optimal" now means
+"matches a minimum that was calculated" rather than "matches what we declared". The oracle fails
+loudly on its search bound instead of returning a number it cannot prove, and a synthetic case whose
+declaration names only the expensive route makes it report the cheap one, which is what shows the
+check computes instead of echoing the declaration.
+
 ## Next steps
 
 1. Extend the corpus with the remaining reference-scale cases and the Raishx additional corpus
@@ -278,5 +298,6 @@ reported loudly without pretending the plan is invalid.
 2. Freeze the environment for a differential report: the report is reproducible now, but the
    reference checkout is not pinned in the artefact and the AE2-VM leg still needs a credential this
    checkout does not have, so only Thunderbolt V2 is measured.
-3. Decide the global-solver question of roadmap phase R2.4, which is the only remaining way to claim
-   optimality rather than minimality-on-the-cases-that-were-tried.
+3. Decide the global-solver question of roadmap phase R2.6. The exact corpus oracle now computes
+   the minimum on the cases that exist, so the only remaining question is whether a production solver
+   is worth its cost on cases nobody has built; the trigger in §17.3 is unchanged.

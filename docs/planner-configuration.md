@@ -26,6 +26,14 @@ numeric value has a validated range.
 | `planner.maxInFlightPerGrid` | `4` | Distinct calculations admitted concurrently for one grid; equivalent requests still deduplicate. | Next request |
 | `planner.circuitBreaker.failureThreshold` | `3` | Consecutive calculation failures before that grid delegates to AE2. | Next failure |
 | `planner.circuitBreaker.cooldownMillis` | `10000` | Delay before one recovery probe is admitted for an unhealthy grid. | Next circuit transition |
+| `planner.missingWeights.multiplier` | `1` | Multiplies every missing weight a consumer registered through the planner API. | Next request |
+| `planner.missingWeights.overrides` | `[]` | Per-key entries `"<serialized-key>=<multiplier>"` that replace `planner.missingWeights.multiplier` for that key; a key no consumer registered can still be weighted this way. | Next request |
+
+The missing-weight settings are the one place a pack disagrees with an addon. The Core never derives
+value from content: a consumer declares exact integer weights per serialized key through the
+`MissingWeights` API, and these two keys scale them. Unregistered keys weigh one, a weight of one is
+never stored, and with nothing registered or configured the planner takes exactly the path it took
+before weights existed, so neither default costs anything.
 
 Worker, queue and shared-tick-budget settings are startup-shaped because Java's
 bounded queue capacity cannot be resized safely while calculations are active and

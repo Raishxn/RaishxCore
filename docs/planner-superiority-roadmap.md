@@ -826,8 +826,10 @@ material, e a comparação com o Thunderbolt V2 deixou de ser uma promessa e vir
 
 Estado em 2026-09-17: quatro dos cinco itens têm evidência; o corpus adicional segue aberto.
 
-- [x] Faltantes mínimos nos casos canônicos: os 22 casos de falta reportam exatamente o mínimo
-      conhecido, `missingOverhead = 1.000`, e a lista é assertada em vez de só impressa.
+- [x] Faltantes mínimos nos casos canônicos: os 27 casos de falta reportam exatamente o mínimo
+      conhecido, `missingOverhead = 1.000`, e a lista é assertada em vez de só impressa. O mínimo
+      deixou de ser só a testemunha declarada: `MissingShortageOracle` o calcula por enumeração
+      limitada sobre o modelo neutro, e um teste compara o report do motor a esse mínimo nos 27 casos.
 - [x] Probabilidade, emitters, remainder, fuzzy, durabilidade e feedback têm contratos explícitos e
       testes: cada uma tem grupo próprio nos três modos de material. Probabilidade é resolvida
       descartando a rolagem, porque uma saída de chance não é promessa a um pedido determinístico.
@@ -1118,6 +1120,12 @@ addon sem recompilar nada. Sem provedor registrado, todo peso é um e o caminho 
 byte a byte, como o gate de alocação já mede. O primeiro trabalho é a API e a ligação no bridge; não
 há valor a preencher até um consumidor declarar o que quer.
 
+**Implementado em 2026-09-17.** A API é `MissingWeights.register(serializedKey, weight)`, com a
+política do operador em `MissingWeightPolicy` lida de `planner.missingWeights.multiplier` e
+`planner.missingWeights.overrides`, e o `Ae2PlannerBridge` junta as duas uma vez por request e passa o
+mapa efetivo a cada tentativa. Nada é preenchido pelo Core: sem registro e sem configuração o mapa é o
+vazio constante e o request sem pesos é o de antes.
+
 ### 17.3 Fase 4: sem solver em produção, com oráculo exato no corpus
 
 O solver inteiro não será construído. A avaliação da Fase 4 registra seis tentativas de construir um
@@ -1134,3 +1142,12 @@ entre um número e uma prova, e não carrega risco nenhum em produção.
 
 O gatilho para reconsiderar o solver em produção continua o mesmo e continua escrito: um caso no
 corpus que reporte faltante ponderado acima do mínimo e cujo ótimo exija escolha conjunta.
+
+**Implementado em 2026-09-17.** O oráculo é `MissingShortageOracle`, no source set de teste, e não
+importa nenhum código do planner: decompõe o grafo neutro em componentes pequenos, propaga
+iterativamente os componentes de produtor único (a cadeia de 20 000 não vai para a pilha), enumera com
+memoização os componentes com escolha de rota e roda um Dijkstra limitado nos componentes com ciclo.
+Um teste confere cada testemunha declarada contra o mínimo calculado nos 27 casos de falta, outro
+confere o report do motor contra o mesmo mínimo, e um caso sintético com testemunha errada prova que o
+oráculo calcula em vez de ecoar. Os limites de busca falham alto em vez de devolver um número não
+provado.

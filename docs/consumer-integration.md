@@ -45,6 +45,28 @@ dependency on both client and server. UFO Future is the reference integration.
 - `client.gui.widget`: reusable AE2-style controls; client only.
 - `neoforge.network`: NeoForge validation adapter; server only.
 
+### Declaring missing weights
+
+The Core never derives material value: nothing in the network says what an item is
+worth, and the planner must not guess about content. A consumer that does know
+declares exact integer weights per serialized key:
+
+```java
+import com.raishxn.ufocore.api.crafting.planner.MissingWeights;
+
+MissingWeights.register("ufo:tier3_plate", 20L);
+MissingWeights.unregister("ufo:tier3_plate"); // back to the default weight of one
+```
+
+`register` replaces any previous declaration, and a weight of one removes it because
+one is the default and is never stored. A key nobody registered weighs one, so an
+installation that declares nothing takes exactly the path it took before weights
+existed. The operator scales the declared weights from
+`config/raishxcore/core.toml`: `planner.missingWeights.multiplier` for all of them,
+and `planner.missingWeights.overrides` for one key, so a pack can disagree without
+recompiling the addon. Weights are read on the planner worker, so registering while
+a plan is in flight cannot rewrite that plan.
+
 Until Core 1.0, adapters outside `api` may receive breaking improvements.
 
 ## Release setup

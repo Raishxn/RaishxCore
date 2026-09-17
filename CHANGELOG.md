@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Missing-weight policy: a consumer declares exact integer weights per serialized
+  key through `MissingWeights`, the operator scales or overrides them in
+  `raishxcore/core.toml` (`planner.missingWeights.multiplier` and
+  `planner.missingWeights.overrides`), and `Ae2PlannerBridge` hands the effective
+  map to every planning attempt. No weight is declared by default, so a key nobody
+  registered weighs one and the unweighted path is unchanged.
+- An exact oracle for the differential corpus (`MissingShortageOracle`) that
+  computes the minimum weighted shortage by bounded enumeration over small
+  components, used only by the corpus and never by production. A test checks every
+  declared witness against it, and another checks the engine's reported shortage
+  against it on all 27 MISSING cases.
+
 ## 0.1.0-alpha.3
 
 ### Added
