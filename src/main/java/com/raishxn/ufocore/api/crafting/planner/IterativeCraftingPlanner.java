@@ -79,8 +79,7 @@ public final class IterativeCraftingPlanner<K> {
                 ? PlanningResult.Status.COMPLETE : PlanningResult.Status.MISSING_INGREDIENTS;
         return new PlanningResult<>(status, plan, new PlanningResult.Diagnostics(graph.revision(),
                 budget.operations, budget.maximumDepth, Math.max(0, nanoTime.getAsLong() - started),
-                PlanningResult.ShortageSummary.of(plan.shortage()), budget.cycleCuts,
-                budget.backtracks));
+                PlanningResult.ShortageSummary.of(plan.shortage()), budget.cycleCuts));
     }
 
     private void planDag(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State state, Budget budget) {
@@ -294,7 +293,6 @@ public final class IterativeCraftingPlanner<K> {
                     budget.operation(0);
                     Choice<K> choice = choices.peek();
                     state.rollback(choice.mark, choice.scheduleSize);
-                    budget.backtracks++;
                     if (choice.next < choice.options.size()) {
                         pending = expand(choice.key, choice.required, choice.depth,
                                 choice.options.get(choice.next++), choice.continuation, state, budget);
@@ -625,8 +623,6 @@ public final class IterativeCraftingPlanner<K> {
         int maximumDepth;
         /** Routes refused because they would have to reach into a key the plan is already expanding. */
         long cycleCuts;
-        /** Times the search rolled back to try another route for a key it had already settled on. */
-        long backtracks;
         Budget(PlanningRequest<K> request, long started) {
             this.request = request; this.started = started;
             long nanos;
