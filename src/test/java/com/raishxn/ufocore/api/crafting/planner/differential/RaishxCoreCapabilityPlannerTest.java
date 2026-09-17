@@ -32,7 +32,7 @@ class RaishxCoreCapabilityPlannerTest {
 
     @Test void acceptsEveryRepresentableScenario() {
         List<CapabilityScenario> required = CapabilityCorpus.required();
-        assertEquals(30, required.size());
+        assertEquals(33, required.size());
         for (CapabilityScenario scenario : required) {
             assertTrue(planner.check(scenario).accepted(),
                     () -> scenario.label() + " must be admitted: " + planner.check(scenario).reason());

@@ -35,7 +35,8 @@ public final class RaishxCoreSemanticModel {
             CapabilitySemantics.DETERMINISTIC_BYPRODUCT,
             CapabilitySemantics.BATCHING,
             CapabilitySemantics.MULTI_ROUTE,
-            CapabilitySemantics.REUSABLE_INPUT));
+            CapabilitySemantics.REUSABLE_INPUT,
+            CapabilitySemantics.FINITE_DURABILITY));
 
     private RaishxCoreSemanticModel() {
     }
@@ -106,10 +107,16 @@ public final class RaishxCoreSemanticModel {
     private static CraftingPattern<String> lower(CapabilityPattern pattern) {
         LinkedHashMap<String, UfoAmount> inputs = new LinkedHashMap<>();
         LinkedHashMap<String, UfoAmount> reusable = new LinkedHashMap<>();
+        LinkedHashMap<String, Integer> durable = new LinkedHashMap<>();
         for (CapabilityInput input : pattern.inputs()) {
             switch (input.kind()) {
                 case EXACT -> inputs.merge(input.key(), input.amount(), UfoAmount::add);
                 case REUSABLE -> reusable.merge(input.key(), input.amount(), UfoAmount::add);
+                case FINITE_USE -> {
+                    // A durable carrier is an ordinary input that survives a number of firings.
+                    inputs.merge(input.key(), input.amount(), UfoAmount::add);
+                    durable.merge(input.key(), input.uses(), Integer::max);
+                }
                 default -> throw new UnsupportedSemantics(
                         "pattern " + pattern.id() + " needs " + input.kind() + " input " + input.key());
             }
@@ -122,7 +129,7 @@ public final class RaishxCoreSemanticModel {
             }
             outputs.merge(output.key(), output.amount(), UfoAmount::add);
         }
-        return new CraftingPattern<>(pattern.id(), pattern.priority(), inputs, reusable, outputs,
+        return new CraftingPattern<>(pattern.id(), pattern.priority(), inputs, reusable, durable, outputs,
                 pattern.craftableOutputs());
     }
 }

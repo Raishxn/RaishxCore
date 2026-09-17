@@ -1,6 +1,7 @@
 package com.raishxn.ufocore.api.crafting.planner.differential;
 
 import com.raishxn.ufocore.api.amount.UfoAmount;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -113,7 +114,7 @@ public final class CapabilityPlanReplay {
                 // A catalyst is never consumed, so it is not demand: the seed stays in remaining, and
                 // that is what the balance below expects to find there.
                 if (input.kind() == CapabilityInput.Kind.REUSABLE) continue;
-                addInto(demand, input.key(), input.amount().multiply(entry.getValue().asBigInteger()));
+                addInto(demand, input.key(), draw(input, entry.getValue()));
             }
             for (CapabilityOutput output : pattern.outputs()) {
                 addInto(produced, output.key(), output.amount().multiply(entry.getValue().asBigInteger()));
@@ -196,7 +197,7 @@ public final class CapabilityPlanReplay {
                     }
                     continue;
                 }
-                UfoAmount need = input.amount().multiply(step.runs().asBigInteger());
+                UfoAmount need = draw(input, step.runs());
                 need = crafted.take(input.key(), need);
                 UfoAmount fromStock = consumable.take(input.key(), need);
                 UfoAmount stockDraw = need.subtract(fromStock);
@@ -314,9 +315,24 @@ public final class CapabilityPlanReplay {
     private static boolean isReplayable(CapabilityPattern pattern) {
         return pattern.inputs().stream().allMatch(input ->
                         input.kind() == CapabilityInput.Kind.EXACT
-                                || input.kind() == CapabilityInput.Kind.REUSABLE)
+                                || input.kind() == CapabilityInput.Kind.REUSABLE
+                                || input.kind() == CapabilityInput.Kind.FINITE_USE)
                 && pattern.outputs().stream().noneMatch(output ->
                         output.kind() == CapabilityOutput.Kind.PROBABILISTIC);
+    }
+
+    /**
+     * Units one batch of {@code runs} firings draws of an input. A durable carrier is consumed, but
+     * one unit survives several firings, so a batch needs one unit per {@code uses} firings rather
+     * than one per firing.
+     */
+    private static UfoAmount draw(CapabilityInput input, UfoAmount runs) {
+        if (input.kind() != CapabilityInput.Kind.FINITE_USE) {
+            return input.amount().multiply(runs.asBigInteger());
+        }
+        BigInteger[] quotient = runs.asBigInteger().divideAndRemainder(BigInteger.valueOf(input.uses()));
+        BigInteger carriers = quotient[1].signum() == 0 ? quotient[0] : quotient[0].add(BigInteger.ONE);
+        return input.amount().multiply(carriers);
     }
 
     private static UfoAmount request(CapabilityPlan plan, String key) {

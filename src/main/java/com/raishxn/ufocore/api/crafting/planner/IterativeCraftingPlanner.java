@@ -316,7 +316,10 @@ public final class IterativeCraftingPlanner<K> {
                 state.add(state.missing, input.key(), state.requirePresent(input.key(), input.amount()));
                 continue;
             }
-            pending = new Task<>(input.key(), multiply(input.amount(), option.runs), depth + 1, null, null, pending);
+            UfoAmount drawn = input.durable()
+                    ? multiply(input.amount(), ceil(option.runs, UfoAmount.of(input.uses())))
+                    : multiply(input.amount(), option.runs);
+            pending = new Task<>(input.key(), drawn, depth + 1, null, null, pending);
         }
         return pending;
     }
@@ -338,14 +341,25 @@ public final class IterativeCraftingPlanner<K> {
             for (PatternEntry<K> input : pattern.inputs()) {
                 budget.operation(0);
                 UfoAmount available = state.available(input.key());
-                // A catalyst is required once and handed back after every execution, so it neither
-                // scales with the run count nor caps how many times the pattern may fire.
-                UfoAmount needed = input.reusable() ? input.amount() : multiply(input.amount(), runs);
+                // A catalyst is required once and handed back; a durable carrier is consumed but one
+                // unit survives several firings, so neither scales with the run count the way an
+                // ordinary input does.
+                UfoAmount needed;
+                if (input.reusable()) {
+                    needed = input.amount();
+                } else if (input.durable()) {
+                    needed = multiply(input.amount(), ceil(runs, UfoAmount.of(input.uses())));
+                } else {
+                    needed = multiply(input.amount(), runs);
+                }
                 if (state.active.contains(input.key()) && available.compareTo(needed) < 0) cycle = true;
                 // Positive self-reproduction and feedback need explicit seed semantics.
                 if (input.key().equals(key)) cycle = true;
                 if (!input.reusable()) {
-                    capacity = capacity.min(UfoAmount.of(available.asBigInteger().divide(input.amount().asBigInteger())));
+                    UfoAmount carriers =
+                            UfoAmount.of(available.asBigInteger().divide(input.amount().asBigInteger()));
+                    capacity = capacity.min(input.durable()
+                            ? multiply(carriers, UfoAmount.of(input.uses())) : carriers);
                 }
                 deficit = deficit.add(needed.subtractClamped(available).asBigInteger());
                 inputCost = inputCost.add(needed.asBigInteger());

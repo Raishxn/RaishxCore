@@ -13,6 +13,7 @@ public final class CraftingPattern<K> {
     private final int priority;
     private final Map<K, UfoAmount> inputs;
     private final Map<K, UfoAmount> reusableInputs;
+    private final Map<K, Integer> durableUses;
     private final Map<K, UfoAmount> outputs;
     private final Set<K> craftableOutputs;
 
@@ -22,7 +23,7 @@ public final class CraftingPattern<K> {
 
     public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs, Map<K, UfoAmount> outputs,
                             Set<K> craftableOutputs) {
-        this(id, priority, inputs, Map.of(), outputs, craftableOutputs);
+        this(id, priority, inputs, Map.of(), Map.of(), outputs, craftableOutputs);
     }
 
     /**
@@ -33,6 +34,17 @@ public final class CraftingPattern<K> {
     public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs,
                             Map<K, UfoAmount> reusableInputs, Map<K, UfoAmount> outputs,
                             Set<K> craftableOutputs) {
+        this(id, priority, inputs, reusableInputs, Map.of(), outputs, craftableOutputs);
+    }
+
+    /**
+     * @param durableUses carriers among {@code inputs} that survive a limited number of executions:
+     *                    a run needs one carrier per {@code uses} firings, so a batch of {@code n}
+     *                    firings consumes {@code ceil(n / uses)} of them
+     */
+    public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs,
+                            Map<K, UfoAmount> reusableInputs, Map<K, Integer> durableUses,
+                            Map<K, UfoAmount> outputs, Set<K> craftableOutputs) {
         this.id = Objects.requireNonNull(id, "id");
         if (id.isBlank()) throw new IllegalArgumentException("pattern id must not be blank");
         this.priority = priority;
@@ -43,6 +55,18 @@ public final class CraftingPattern<K> {
                 throw new IllegalArgumentException("input cannot be both consumed and reusable: " + key);
             }
         }
+        LinkedHashMap<K, Integer> uses = new LinkedHashMap<>();
+        Objects.requireNonNull(durableUses, "durableUses").forEach((key, value) -> {
+            Objects.requireNonNull(key, "durable input key");
+            if (!this.inputs.containsKey(key)) {
+                throw new IllegalArgumentException("durable input must be a consumed input: " + key);
+            }
+            if (value == null || value < 1) {
+                throw new IllegalArgumentException("durable input uses must be positive: " + key);
+            }
+            uses.put(key, value);
+        });
+        this.durableUses = Collections.unmodifiableMap(uses);
         this.outputs = copyAmounts(outputs, "output");
         if (this.outputs.isEmpty()) throw new IllegalArgumentException("pattern must have an output");
         this.craftableOutputs = Set.copyOf(craftableOutputs);
@@ -60,6 +84,8 @@ public final class CraftingPattern<K> {
     public Map<K, UfoAmount> inputs() { return inputs; }
     /** Catalysts that must be present but are returned, so they are never consumed. */
     public Map<K, UfoAmount> reusableInputs() { return reusableInputs; }
+    /** Firings one carrier of a consumed input survives; absent means it is consumed outright. */
+    public Map<K, Integer> durableUses() { return durableUses; }
     public Map<K, UfoAmount> outputs() { return outputs; }
     /** Outputs selectable as a crafting route; other outputs remain usable byproducts. */
     public Set<K> craftableOutputs() { return craftableOutputs; }
@@ -79,11 +105,12 @@ public final class CraftingPattern<K> {
     @Override public boolean equals(Object object) {
         return object instanceof CraftingPattern<?> other && id.equals(other.id) && priority == other.priority
                 && inputs.equals(other.inputs) && reusableInputs.equals(other.reusableInputs)
-                && outputs.equals(other.outputs) && craftableOutputs.equals(other.craftableOutputs);
+                && durableUses.equals(other.durableUses) && outputs.equals(other.outputs)
+                && craftableOutputs.equals(other.craftableOutputs);
     }
 
     @Override public int hashCode() {
-        return Objects.hash(id, priority, inputs, reusableInputs, outputs, craftableOutputs);
+        return Objects.hash(id, priority, inputs, reusableInputs, durableUses, outputs, craftableOutputs);
     }
     @Override public String toString() { return id; }
 }

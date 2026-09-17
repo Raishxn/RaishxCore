@@ -393,7 +393,7 @@ public final class CapabilityCorpus {
         Map<String, UfoAmount> starved = amounts(Map.of("raw", 10_000L, "tool", 99L));
         threeModes(out, "durability/finite-use-chain", CapabilityFamily.FINITE_DURABILITY, uses,
                 "product", produced, minimum, starved, List.of(amounts(Map.of("tool", 1L))), true,
-                semantics, CapabilityExpectation.LIMITATION,
+                semantics, CapabilityExpectation.REQUIRED,
                 stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 

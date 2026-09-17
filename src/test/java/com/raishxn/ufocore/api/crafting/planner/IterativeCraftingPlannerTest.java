@@ -163,6 +163,36 @@ class IterativeCraftingPlannerTest {
         assertEquals(amount(64), result.plan().patternExecutions().get(recipe));
     }
 
+    @Test void aDurableCarrierIsDrawnOncePerUseBlock() {
+        var recipe = durable("plate", Map.of("ingot", amount(1), "die", amount(1)),
+                Map.of("die", 10), Map.of("plate", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", amount(25), Map.of("ingot", amount(25), "die", amount(3))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status());
+        // Twenty-five firings need ceil(25 / 10) = 3 carriers, and exactly three are on hand.
+        assertEquals(amount(3), result.plan().extractedFromInventory().get("die"));
+    }
+
+    @Test void aDurableCarrierShortageIsReportedInWholeCarriers() {
+        var recipe = durable("plate", Map.of("ingot", amount(1), "die", amount(1)),
+                Map.of("die", 10), Map.of("plate", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", amount(25), Map.of("ingot", amount(25), "die", amount(2))));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, result.status(),
+                () -> "missing=" + result.plan().missing() + " extracted=" + result.plan().extractedFromInventory());
+        assertEquals(amount(1), result.plan().missing().get("die"),
+                () -> "two carriers cover twenty firings, so five more need one more carrier");
+    }
+
+    private static CraftingPattern<String> durable(String id, Map<String, UfoAmount> inputs,
+                                                    Map<String, Integer> durableUses,
+                                                    Map<String, UfoAmount> outputs) {
+        return new CraftingPattern<>(id, 0, inputs, Map.of(), durableUses, outputs, outputs.keySet());
+    }
     private static CraftingPattern<String> catalyst(String id, Map<String, UfoAmount> inputs,
                                                      Map<String, UfoAmount> reusableInputs,
                                                      Map<String, UfoAmount> outputs) {
