@@ -296,7 +296,7 @@ public final class CapabilityCorpus {
         threeModes(out, "cycle/conversion-ring", CapabilityFamily.CONVERSION_CYCLE, 3, "T",
                 UfoAmount.ONE, minimum, starved,
                 List.of(amounts(Map.of("A", 1L)), amounts(Map.of("C", 1L))), false, semantics,
-                CapabilityExpectation.LIMITATION, stock -> new CapabilityGraph(patterns, consumable(stock)));
+                CapabilityExpectation.REQUIRED, stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 
     private static void addSelfGrowth(List<CapabilityScenario> out) {

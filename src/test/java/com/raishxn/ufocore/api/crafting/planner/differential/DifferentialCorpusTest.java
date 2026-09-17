@@ -46,7 +46,12 @@ class DifferentialCorpusTest {
             // Self-growth is the one feedback family whose frontier is a closed form: the minimum is
             // the seed that covers the shortfall of a single run, and the planner must find exactly it
             // rather than the whole batch it would demand if it drew its own output as a normal input.
-            "cycle/self-growth");
+            "cycle/self-growth",
+            // The conversion ring's minimum is one extra unit of either entry key, and the planner has
+            // to see that the ring's two gainful legs are usable while the lossy return leg is not
+            // worth taking: an A turned into nine B and one of those B into nine C is a real route, a
+            // B turned back into A is not.
+            "cycle/conversion-ring");
 
     private static DifferentialHarness.Report report;
 
@@ -86,10 +91,14 @@ class DifferentialCorpusTest {
             }
         }
         assertTrue(unresolved.isEmpty(), () -> "unresolved required capabilities: " + unresolved);
-        // Was 39 before self-growth was activated. The family was previously declined because a
-        // self-feeding step was drawn as one batch, which demanded a whole run count of a material
-        // that only needs one seed; the planner now funds such a step run by run.
-        assertEquals(42, report.supportedRequired());
+        // Was 39 before the feedback and cycle families were activated. Self-growth was previously
+        // declined because a self-feeding step was drawn as one batch, which demanded a whole run
+        // count of a material that only needs one seed; the planner now funds such a step run by run.
+        // The conversion ring needed nothing new at all: the cycle guard already refuses a route into
+        // a key that is being expanded, and the leaf-cost pass already leaves keys on a cycle out of
+        // the cost map rather than failing, so the ring was a safe decline that turned out to be a
+        // capability the engine had all along and never claimed.
+        assertEquals(45, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
@@ -110,7 +119,7 @@ class DifferentialCorpusTest {
                             + entry.classification());
         }
         assertEquals(0, report.supportedLimitations());
-        assertEquals(9, report.of(CapabilityExpectation.LIMITATION).size());
+        assertEquals(6, report.of(CapabilityExpectation.LIMITATION).size());
     }
 
     @Test void everyResultIsDeterministic() {
@@ -140,10 +149,9 @@ class DifferentialCorpusTest {
                 CapabilityFamily.BATCHING, CapabilityFamily.BYPRODUCT, CapabilityFamily.DEEP_CHAIN,
                 CapabilityFamily.REUSABLE_CATALYST, CapabilityFamily.FINITE_DURABILITY,
                 CapabilityFamily.FUZZY_VARIANT, CapabilityFamily.EMITTER,
-                CapabilityFamily.POSITIVE_FEEDBACK),
+                CapabilityFamily.POSITIVE_FEEDBACK, CapabilityFamily.CONVERSION_CYCLE),
                 required);
-        assertEquals(Set.of(CapabilityFamily.CONVERSION_CYCLE,
-                CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
+        assertEquals(Set.of(CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
                 limitations);
     }
 
