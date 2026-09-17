@@ -12,6 +12,7 @@ public final class CraftingPattern<K> {
     private final String id;
     private final int priority;
     private final Map<K, UfoAmount> inputs;
+    private final Map<K, UfoAmount> reusableInputs;
     private final Map<K, UfoAmount> outputs;
     private final Set<K> craftableOutputs;
 
@@ -21,10 +22,27 @@ public final class CraftingPattern<K> {
 
     public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs, Map<K, UfoAmount> outputs,
                             Set<K> craftableOutputs) {
+        this(id, priority, inputs, Map.of(), outputs, craftableOutputs);
+    }
+
+    /**
+     * @param reusableInputs catalysts the pattern must have on hand but hands back after every
+     *                       execution: the amount is a seed that is never consumed, so it is required
+     *                       once for the whole plan rather than once per run
+     */
+    public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs,
+                            Map<K, UfoAmount> reusableInputs, Map<K, UfoAmount> outputs,
+                            Set<K> craftableOutputs) {
         this.id = Objects.requireNonNull(id, "id");
         if (id.isBlank()) throw new IllegalArgumentException("pattern id must not be blank");
         this.priority = priority;
         this.inputs = copyAmounts(inputs, "input");
+        this.reusableInputs = copyAmounts(reusableInputs, "reusable input");
+        for (K key : this.reusableInputs.keySet()) {
+            if (this.inputs.containsKey(key)) {
+                throw new IllegalArgumentException("input cannot be both consumed and reusable: " + key);
+            }
+        }
         this.outputs = copyAmounts(outputs, "output");
         if (this.outputs.isEmpty()) throw new IllegalArgumentException("pattern must have an output");
         this.craftableOutputs = Set.copyOf(craftableOutputs);
@@ -40,6 +58,8 @@ public final class CraftingPattern<K> {
     public String id() { return id; }
     public int priority() { return priority; }
     public Map<K, UfoAmount> inputs() { return inputs; }
+    /** Catalysts that must be present but are returned, so they are never consumed. */
+    public Map<K, UfoAmount> reusableInputs() { return reusableInputs; }
     public Map<K, UfoAmount> outputs() { return outputs; }
     /** Outputs selectable as a crafting route; other outputs remain usable byproducts. */
     public Set<K> craftableOutputs() { return craftableOutputs; }
@@ -58,10 +78,12 @@ public final class CraftingPattern<K> {
 
     @Override public boolean equals(Object object) {
         return object instanceof CraftingPattern<?> other && id.equals(other.id) && priority == other.priority
-                && inputs.equals(other.inputs) && outputs.equals(other.outputs)
-                && craftableOutputs.equals(other.craftableOutputs);
+                && inputs.equals(other.inputs) && reusableInputs.equals(other.reusableInputs)
+                && outputs.equals(other.outputs) && craftableOutputs.equals(other.craftableOutputs);
     }
 
-    @Override public int hashCode() { return Objects.hash(id, priority, inputs, outputs, craftableOutputs); }
+    @Override public int hashCode() {
+        return Objects.hash(id, priority, inputs, reusableInputs, outputs, craftableOutputs);
+    }
     @Override public String toString() { return id; }
 }

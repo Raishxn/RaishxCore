@@ -124,6 +124,50 @@ class IterativeCraftingPlannerTest {
         assertEquals(new RevisionedCraftingGraphCache.CacheStats(1, 2), cache.stats());
     }
 
+    @Test void aCatalystIsRequiredOnceAndNeverConsumed() {
+        var recipe = catalyst("plate", Map.of("ingot", amount(1)), Map.of("mold", amount(1)),
+                Map.of("plate", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", amount(5), Map.of("ingot", amount(5), "mold", amount(1))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status());
+        assertEquals(amount(5), result.plan().patternExecutions().get(recipe));
+        // Handed back after every execution, so the seed is never drawn from the inventory.
+        assertFalse(result.plan().extractedFromInventory().containsKey("mold"));
+        assertEquals(amount(1), result.plan().remaining().get("mold"));
+    }
+
+    @Test void aMissingCatalystCostsOneSeedNotOnePerRun() {
+        var recipe = catalyst("plate", Map.of("ingot", amount(1)), Map.of("mold", amount(1)),
+                Map.of("plate", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", amount(5), Map.of("ingot", amount(5))));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, result.status(),
+                () -> "missing=" + result.plan().missing() + " executions=" + result.plan().patternExecutions()
+                        + " remaining=" + result.plan().remaining());
+        assertEquals(amount(1), result.plan().missing().get("mold"),
+                () -> "a catalyst is a seed, so five runs still need exactly one");
+    }
+
+    @Test void aCatalystDoesNotCapHowManyTimesAPatternFires() {
+        var recipe = catalyst("plate", Map.of("ingot", amount(1)), Map.of("mold", amount(1)),
+                Map.of("plate", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", amount(64), Map.of("ingot", amount(64), "mold", amount(1))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status());
+        assertEquals(amount(64), result.plan().patternExecutions().get(recipe));
+    }
+
+    private static CraftingPattern<String> catalyst(String id, Map<String, UfoAmount> inputs,
+                                                     Map<String, UfoAmount> reusableInputs,
+                                                     Map<String, UfoAmount> outputs) {
+        return new CraftingPattern<>(id, 0, inputs, reusableInputs, outputs, outputs.keySet());
+    }
     private static CraftingPattern<String> pattern(String id, Map<String, UfoAmount> inputs,
                                                     Map<String, UfoAmount> outputs) {
         return new CraftingPattern<>(id, inputs, outputs);

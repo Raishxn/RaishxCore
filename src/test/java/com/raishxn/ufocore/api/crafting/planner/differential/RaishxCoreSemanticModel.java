@@ -22,6 +22,14 @@ import java.util.Set;
  */
 public final class RaishxCoreSemanticModel {
 
+    /**
+     * The semantics this model claims. Always a subset of what the corpus may require.
+     *
+     * <p>{@code REUSABLE_INPUT} is deliberately absent even though the planner and the lowering below
+     * can already carry it: the shared replay oracle still refuses a graph with a catalyst, so a plan
+     * for one could not be verified, and a capability the model cannot prove is not claimed. Adding
+     * the enum entry back is the whole activation once the oracle understands catalysts.
+     */
     private static final Set<CapabilitySemantics> SUPPORTED = Set.copyOf(EnumSet.of(
             CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
             CapabilitySemantics.DETERMINISTIC_BYPRODUCT,
@@ -73,10 +81,13 @@ public final class RaishxCoreSemanticModel {
 
         LinkedHashMap<String, UfoAmount> stock = new LinkedHashMap<>();
         scenario.graph().stock().forEach((key, entry) -> {
-            if (entry.kind() != CapabilityGraph.CapabilityStock.Kind.CONSUMABLE) {
-                throw new UnsupportedSemantics("unsupported " + entry.kind() + " stock for " + key);
+            switch (entry.kind()) {
+                // A host-owned reusable seed is ordinary inventory as far as the planner is concerned:
+                // it has to be present, and the reusable input it feeds is never consumed, so the
+                // seed survives the whole plan.
+                case CONSUMABLE, REUSABLE -> stock.put(key, entry.amount());
+                case EMITTED -> throw new UnsupportedSemantics("unsupported " + entry.kind() + " stock for " + key);
             }
-            stock.put(key, entry.amount());
         });
 
         ArrayList<CraftingPattern<String>> patterns = new ArrayList<>();
@@ -93,12 +104,14 @@ public final class RaishxCoreSemanticModel {
 
     private static CraftingPattern<String> lower(CapabilityPattern pattern) {
         LinkedHashMap<String, UfoAmount> inputs = new LinkedHashMap<>();
+        LinkedHashMap<String, UfoAmount> reusable = new LinkedHashMap<>();
         for (CapabilityInput input : pattern.inputs()) {
-            if (input.kind() != CapabilityInput.Kind.EXACT) {
-                throw new UnsupportedSemantics(
+            switch (input.kind()) {
+                case EXACT -> inputs.merge(input.key(), input.amount(), UfoAmount::add);
+                case REUSABLE -> reusable.merge(input.key(), input.amount(), UfoAmount::add);
+                default -> throw new UnsupportedSemantics(
                         "pattern " + pattern.id() + " needs " + input.kind() + " input " + input.key());
             }
-            inputs.merge(input.key(), input.amount(), UfoAmount::add);
         }
         LinkedHashMap<String, UfoAmount> outputs = new LinkedHashMap<>();
         for (CapabilityOutput output : pattern.outputs()) {
@@ -108,7 +121,7 @@ public final class RaishxCoreSemanticModel {
             }
             outputs.merge(output.key(), output.amount(), UfoAmount::add);
         }
-        return new CraftingPattern<>(pattern.id(), pattern.priority(), inputs, outputs,
+        return new CraftingPattern<>(pattern.id(), pattern.priority(), inputs, reusable, outputs,
                 pattern.craftableOutputs());
     }
 }

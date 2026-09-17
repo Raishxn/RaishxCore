@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -56,6 +57,7 @@ public final class ImmutableCraftingGraph<K> {
             CompiledPattern<K> compiled = compile(pattern, keyComparator, routable);
             compiledPatterns.add(compiled);
             for (K key : pattern.inputs().keySet()) checkKey(uniqueKeys, key);
+            for (K key : pattern.reusableInputs().keySet()) checkKey(uniqueKeys, key);
             for (K key : pattern.outputs().keySet()) checkKey(uniqueKeys, key);
             for (PatternEntry<K> output : compiled.outputs()) {
                 if (pattern.craftableOutputs().contains(output.key())) {
@@ -106,8 +108,12 @@ public final class ImmutableCraftingGraph<K> {
     }
 
     private List<K> compileSimpleDemandOrder(Set<K> keys) {
+        // A catalyst is not a dependency the demand pass may propagate, so anything carrying one
+        // leaves the fast path and goes through the planner that understands reusable inputs.
         if (byOutput.values().stream().anyMatch(value -> value.size() != 1)
-                || compiled.stream().anyMatch(value -> value.outputs().size() != 1)) return List.of();
+                || compiled.stream().anyMatch(value -> value.outputs().size() != 1)
+                || compiled.stream().anyMatch(value -> value.inputs().stream()
+                        .anyMatch(PatternEntry::reusable))) return List.of();
         Map<K, Integer> incoming = new HashMap<>();
         for (K key : keys) incoming.put(key, 0);
         for (CompiledPattern<K> pattern : compiled) {
@@ -130,8 +136,9 @@ public final class ImmutableCraftingGraph<K> {
 
     private static <K> CompiledPattern<K> compile(CraftingPattern<K> pattern,
                                                    Comparator<? super K> comparator, Set<K> routable) {
-        return new CompiledPattern<>(pattern, entries(pattern.inputs(), comparator, routable),
-                entries(pattern.outputs(), comparator, null));
+        return new CompiledPattern<>(pattern,
+                entries(pattern.inputs(), pattern.reusableInputs(), comparator, routable),
+                entries(pattern.outputs(), Map.of(), comparator, null));
     }
 
     /**
@@ -139,10 +146,24 @@ public final class ImmutableCraftingGraph<K> {
      * before inputs that can only be collected as a deterministic coproduct of a sibling branch.
      */
     private static <K> List<PatternEntry<K>> entries(Map<K, UfoAmount> amounts,
+                                                      Map<K, UfoAmount> reusable,
                                                       Comparator<? super K> comparator,
                                                       Set<K> routableFirst) {
-        ArrayList<PatternEntry<K>> entries = new ArrayList<>(amounts.size());
-        amounts.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount)));
+        // A catalyst is an input the pattern needs even though it is handed back, so the compiled
+        // entry list carries both, with the flag telling the planner which is which. The merge is
+        // built only when there is a catalyst to merge: an extra map per pattern would otherwise be
+        // charged to every graph, including the ones that have no reusable input at all.
+        LinkedHashMap<K, UfoAmount> merged = reusable.isEmpty() ? null : new LinkedHashMap<>(amounts);
+        if (merged != null) {
+            merged.putAll(reusable);
+        }
+        ArrayList<PatternEntry<K>> entries =
+                new ArrayList<>((merged == null ? amounts : merged).size());
+        if (merged == null) {
+            amounts.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount, false)));
+        } else {
+            merged.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount, reusable.containsKey(key))));
+        }
         entries.sort((left, right) -> {
             if (routableFirst != null) {
                 boolean leftRoutable = routableFirst.contains(left.key());
@@ -154,7 +175,11 @@ public final class ImmutableCraftingGraph<K> {
         return List.copyOf(entries);
     }
 
-    record PatternEntry<K>(K key, UfoAmount amount) {}
+    record PatternEntry<K>(K key, UfoAmount amount, boolean reusable) {
+        PatternEntry(K key, UfoAmount amount) {
+            this(key, amount, false);
+        }
+    }
     record CompiledPattern<K>(CraftingPattern<K> pattern, List<PatternEntry<K>> inputs,
                               List<PatternEntry<K>> outputs) {
         UfoAmount outputAmount(K key) {

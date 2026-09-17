@@ -49,7 +49,10 @@ public final class IterativeCraftingPlanner<K> {
                 planDag(graph, request, state, budget);
             } else {
                 Map<K, Integer> ranks = reachability(graph, request, budget);
-                Map<K, BigInteger> leafCosts = leafCosts(graph, budget);
+                // The leaf demand pass only informs a choice between routes. A graph where every key
+                // has a single route has nothing to choose, so it must not pay for the computation.
+                Map<K, BigInteger> leafCosts = hasRouteChoice(graph)
+                        ? leafCosts(graph, budget) : Map.of();
                 if (!search(graph, request, state, ranks, leafCosts, budget, false)) {
                     // Shortage reporting starts from a fresh snapshot, never speculative leftovers.
                     state = new State(graph, request);
@@ -138,6 +141,16 @@ public final class IterativeCraftingPlanner<K> {
             }
         }
         return ranks;
+    }
+
+    /** True when some key is produced by more than one pattern, so route choice actually exists. */
+    private static <K> boolean hasRouteChoice(ImmutableCraftingGraph<K> graph) {
+        for (CompiledPattern<K> pattern : graph.compiledPatterns()) {
+            for (PatternEntry<K> output : pattern.outputs()) {
+                if (graph.compiledPatternsFor(output.key()).size() > 1) return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -296,6 +309,13 @@ public final class IterativeCraftingPlanner<K> {
         for (int i = inputs.size() - 1; i >= 0; i--) {
             budget.operation(depth);
             PatternEntry<K> input = inputs.get(i);
+            if (input.reusable()) {
+                // A catalyst must be on hand but is handed back, so it is never consumed and no
+                // demand is propagated for it. It is checked once, when the pattern is expanded, so a
+                // catalyst that this same plan would craft only later still reads as missing.
+                state.add(state.missing, input.key(), state.requirePresent(input.key(), input.amount()));
+                continue;
+            }
             pending = new Task<>(input.key(), multiply(input.amount(), option.runs), depth + 1, null, null, pending);
         }
         return pending;
@@ -318,11 +338,15 @@ public final class IterativeCraftingPlanner<K> {
             for (PatternEntry<K> input : pattern.inputs()) {
                 budget.operation(0);
                 UfoAmount available = state.available(input.key());
-                UfoAmount needed = multiply(input.amount(), runs);
+                // A catalyst is required once and handed back after every execution, so it neither
+                // scales with the run count nor caps how many times the pattern may fire.
+                UfoAmount needed = input.reusable() ? input.amount() : multiply(input.amount(), runs);
                 if (state.active.contains(input.key()) && available.compareTo(needed) < 0) cycle = true;
                 // Positive self-reproduction and feedback need explicit seed semantics.
                 if (input.key().equals(key)) cycle = true;
-                capacity = capacity.min(UfoAmount.of(available.asBigInteger().divide(input.amount().asBigInteger())));
+                if (!input.reusable()) {
+                    capacity = capacity.min(UfoAmount.of(available.asBigInteger().divide(input.amount().asBigInteger())));
+                }
                 deficit = deficit.add(needed.subtractClamped(available).asBigInteger());
                 inputCost = inputCost.add(needed.asBigInteger());
                 rank = Math.max(rank, ranks.getOrDefault(input.key(), Integer.MAX_VALUE));
@@ -440,6 +464,10 @@ public final class IterativeCraftingPlanner<K> {
         }
         UfoAmount available(K key) {
             return stock.getOrDefault(key, UfoAmount.ZERO).add(crafted.getOrDefault(key, UfoAmount.ZERO));
+        }
+        /** How much of {@code key} is missing for it to be present at all. Consumes nothing. */
+        UfoAmount requirePresent(K key, UfoAmount amount) {
+            return amount.subtractClamped(available(key));
         }
         UfoAmount consume(K key, UfoAmount amount) {
             UfoAmount surplus = crafted.getOrDefault(key, UfoAmount.ZERO);
