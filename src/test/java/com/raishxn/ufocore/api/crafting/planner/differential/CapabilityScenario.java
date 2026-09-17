@@ -2,6 +2,7 @@ package com.raishxn.ufocore.api.crafting.planner.differential;
 
 import com.raishxn.ufocore.api.amount.UfoAmount;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -132,6 +133,15 @@ public record CapabilityScenario(String id,
             return Double.NaN;
         }
         return weightedCost(reported).divide(minimum, 6, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    /**
+     * Exact weighted cost of one shortage set, in whole-number weights. The oracle check needs the same
+     * arithmetic the ratio uses, but as an exact integer so two computed minima can be compared without
+     * a rounding step deciding the result.
+     */
+    public BigInteger exactWeightedCost(Map<String, UfoAmount> missing) {
+        return weightedCost(missing).toBigIntegerExact();
     }
 
     private BigDecimal weightedCost(Map<String, UfoAmount> missing) {

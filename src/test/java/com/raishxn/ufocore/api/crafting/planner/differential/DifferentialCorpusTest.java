@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigInteger;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -150,6 +151,27 @@ class DifferentialCorpusTest {
             assertTrue(entry.deterministic(), () -> entry.id() + "/" + entry.mode()
                     + " is not deterministic: " + entry.determinismNote());
         }
+    }
+
+    /**
+     * The engine's reported shortage must be the exact oracle's computed minimum, not merely equal to a
+     * witness we declared ourselves. The oracle is independent: it enumerates the neutral model and
+     * never calls the planner, so this is the proof phase 4 was supposed to deliver without a solver in
+     * production. A disagreement here is either an engine bug or an oracle bug, and both are findings.
+     */
+    @Test void reportedShortageEqualsTheExactOracleMinimumOnEveryMissingCase() {
+        int checked = 0;
+        for (DifferentialHarness.Entry entry : report.of(CapabilityExpectation.REQUIRED)) {
+            if (entry.mode() != CapabilityMaterialMode.MISSING) {
+                continue;
+            }
+            MissingShortageOracle.Result oracle = MissingShortageOracle.minimum(entry.scenario());
+            BigInteger engine = entry.scenario().exactWeightedCost(entry.run().reportedMissing());
+            assertEquals(oracle.cost(), engine, () -> entry.id() + "/missing engine="
+                    + entry.run().reportedMissing() + " oracle=" + oracle.shortage());
+            checked++;
+        }
+        assertEquals(27, checked, "every MISSING case must be checked against the exact oracle");
     }
 
     @Test void canonicalShortagesAreMinimal() {
