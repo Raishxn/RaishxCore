@@ -97,15 +97,40 @@ class PlannerConservationTest {
         verify(result.plan());
     }
 
+    /**
+     * A secondary output is not a selectable route, so nothing that asks what a recipe makes may start
+     * seeing it as one. It is still obtainable, because firing the recipe for its primary yields it,
+     * and when the primary is not wanted for its own sake that is the only way. Reporting the secondary
+     * itself as missing would name a key nobody can supply, when what actually has to be supplied is
+     * the primary's input.
+     */
     @Test void byproductsStayAvailableAndCannotBeSelectedAsAe2PrimaryOutputs() {
         var both = new CraftingPattern<>("a-and-b", 0, amounts(Map.of("raw", 1L)),
                 amounts(Map.of("a", 1L, "b", 1L)), java.util.Set.of("a"));
+        var graph = ImmutableCraftingGraph.create(1, Comparator.naturalOrder(), List.of(both));
+
+        // The selectable view is untouched: no recipe declares b as something it makes.
+        assertTrue(graph.patternsFor("b").isEmpty());
+        assertFalse(graph.patternsFor("a").isEmpty());
+
         var result = run(List.of(both, p("done", "done", Map.of("a", 1L, "b", 1L))),
                 "done", 1, Map.of("raw", 1L));
         assertEquals(PlanningResult.Status.COMPLETE, result.status());
         verify(result.plan());
-        var missing = run(List.of(both), "b", 1, Map.of("raw", 1L));
-        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, missing.status());
+
+        // Asked for on its own, the secondary is planned by firing the recipe for its primary.
+        var secondary = run(List.of(both), "b", 1, Map.of("raw", 1L));
+        assertEquals(PlanningResult.Status.COMPLETE, secondary.status());
+        verify(secondary.plan());
+        assertEquals(1, secondary.plan().patternExecutions().size());
+        assertEquals(UfoAmount.ONE, secondary.plan().patternExecutions().get(both));
+
+        // Twice as much as one firing yields is a shortage of the primary's input, not of the
+        // secondary, which is the difference between an actionable report and a useless one.
+        var partial = run(List.of(both), "b", 2, Map.of("raw", 1L));
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, partial.status());
+        assertEquals(1, partial.plan().missing().size());
+        assertEquals(UfoAmount.ONE, partial.plan().missing().get("raw"));
     }
 
     @Test void cachePublishesOneGraphToConcurrentReadersAndRejectsWrongRevisions() throws Exception {

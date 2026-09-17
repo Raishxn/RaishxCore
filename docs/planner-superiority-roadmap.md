@@ -95,11 +95,16 @@ canônica de inputs passou a resolver entradas com rota antes de entradas que s�
 existem como subproduto, e os quatro casos afetados saíram de `FALSE_NEGATIVE`
 para `SUPPORTED` com `missingOverhead` 1,000.
 
-Permanece fora do modelo: um subproduto nunca é rota selecionável, seguindo
-`Ae2PlanningSnapshot`, que captura `craftableOutputs = Set.of(primary)`. Uma
-chave que só aparece como saída secundária continua sem plano, mesmo quando
-executar o padrão produtor a coletaria (`PatternOutput.role` explícito é
-trabalho do R2.3).
+Um subproduto continua não sendo rota selecionável, seguindo `Ae2PlanningSnapshot`,
+que captura `craftableOutputs = Set.of(primary)`: nada que pergunte o que uma
+receita fabrica passa a enxergá-lo como rota. Mas ele agora é **planejável**: disparar
+a receita pelo primário é o que o produz, e quando o primário não é desejado por si
+só esse é o único caminho. `byproduct/surplus-secondary-demand` fixa a diferença —
+quatro de um secundário contra um do primário obriga a disparar o produtor três vezes
+mais. Antes o motor reportava os três secundários como faltantes, nomeando uma chave
+que ninguém pode comprar; agora reporta o insumo do primário, que é o que de fato
+precisa ser suprido. O papel explícito de saída (R2.3) segue valendo para o que falta:
+distinguir as duas coisas na captura, em vez de derivá-las de `craftableOutputs`.
 
 ### 2.3 Baseline do Thunderbolt V2 a superar
 

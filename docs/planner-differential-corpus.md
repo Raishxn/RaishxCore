@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-18 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 54 cases.
+19 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 57 cases.
 
-Representable today and therefore `REQUIRED`, 54 cases:
+Representable today and therefore `REQUIRED`, 57 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -89,6 +89,7 @@ Representable today and therefore `REQUIRED`, 54 cases:
 | `batching/multi-output` | whole-batch rounding with a deterministic coproduct |
 | `byproduct/shared-coproduct` | one coproduct produced by two routes |
 | `byproduct/feeds-later-stage` | coproduct consumed by a later stage |
+| `byproduct/surplus-secondary-demand` | more secondary wanted than the primary induces |
 | `deep-chain/linear-20000` | 20 000-deep chain, no stack growth |
 | `cycle/conversion-ring` | a ring of conversions, priced by the cycle guard |
 | `cycle/self-growth` | a step that feeds itself, funded one seed at a time |
@@ -158,17 +159,27 @@ The registry keeps working the same way: an unlisted defect fails the gate, and 
 reproducing fails it too. `DifferentialHarnessGateTest` covers every branch of that logic.
 `PlannerConservationTest.collectsACoproductFromItsSiblingBranchBeforeDemandingIt` pins the fix.
 
-### Remaining byproduct boundary
+## The byproduct boundary
 
-A coproduct is never a selectable route, matching `Ae2PlanningSnapshot`, where a captured pattern
-declares `craftableOutputs = Set.of(primary)`. A key that only ever appears as a secondary output is
-therefore still not planned, even when firing its producing pattern would collect it. That is
-asserted by `PlannerConservationTest.byproductsStayAvailableAndCannotBeSelectedAsAe2PrimaryOutputs`,
-and it belongs to the explicit output-role model of roadmap phase R2.3.
+A secondary output is still not a selectable route: `Ae2PlanningSnapshot` declares
+`craftableOutputs = Set.of(primary)`, so nothing that asks what a recipe makes starts seeing a
+secondary as one, and `ImmutableCraftingGraph.patternsFor` keeps returning nothing for it.
+
+It is nevertheless obtainable, because firing the recipe for its primary yields it, and when the
+primary is not wanted for its own sake that is the only way. `byproduct/surplus-secondary-demand`
+pins the difference: the target needs four of a secondary and one of the primary, so the producing
+pattern has to be fired three more times for the secondary alone. Before, the engine reported the
+other three as missing secondary, which named a key nobody can supply; it now reports the primary's
+input, which is what actually has to be bought.
+
+`PlannerConservationTest.byproductsStayAvailableAndCannotBeSelectedAsAe2PrimaryOutputs` asserts both
+halves: the selectable view is unchanged, and the request is planned anyway. The surplus produced
+while chasing a secondary is inherent to the recipe and is reported as overproduction rather than
+hidden.
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 18 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 19 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.
@@ -177,9 +188,12 @@ reported loudly without pretending the plan is invalid.
 
 ## Next steps
 
-1. Add a corpus case for the remaining byproduct boundary, with the output-role semantics it needs,
-   so the refusal is measured rather than only asserted by a unit test.
-2. Extend the corpus with the remaining reference-scale cases and the Raishx additional corpus
+1. Extend the corpus with the remaining reference-scale cases and the Raishx additional corpus
    (`BigInteger` extremes, wide graphs, item plus fluid, lifecycle cancellation, concurrent grids).
-3. Add the Thunderbolt V2 and AE2 adapters behind the same `CapabilityPlanner` contract and freeze
-   the environment for the first real differential report.
+   These are cases inside families already covered, so their value is finding defects rather than
+   covering a semantics that is missing.
+2. Freeze the environment for a reproducible differential report. Both reference adapters are behind
+   the same `CapabilityPlanner` contract already; the AE2-VM leg still needs a credential this
+   checkout does not have, so only Thunderbolt V2 is measured.
+3. Decide the global-solver question of roadmap phase R2.4, which is the only remaining way to claim
+   optimality rather than minimality-on-the-cases-that-were-tried.

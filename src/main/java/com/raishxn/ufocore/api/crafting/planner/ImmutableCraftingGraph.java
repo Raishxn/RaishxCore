@@ -31,6 +31,7 @@ public final class ImmutableCraftingGraph<K> {
     private final Comparator<? super K> keyComparator;
     private final List<CraftingPattern<K>> patterns;
     private final NavigableMap<K, List<CompiledPattern<K>>> byOutput;
+    private final Map<K, List<CompiledPattern<K>>> bySecondaryOutput;
     private final Map<K, List<CompiledPattern<K>>> byInput;
     private final List<CompiledPattern<K>> compiled;
     private final List<K> simpleDemandOrder;
@@ -44,6 +45,7 @@ public final class ImmutableCraftingGraph<K> {
         ordered.sort(Comparator.comparing(CraftingPattern::id));
         HashSet<String> ids = new HashSet<>();
         TreeMap<K, List<CompiledPattern<K>>> index = new TreeMap<>(keyComparator);
+        TreeMap<K, List<CompiledPattern<K>>> secondary = new TreeMap<>(keyComparator);
         TreeMap<K, List<CompiledPattern<K>>> consumers = new TreeMap<>(keyComparator);
         ArrayList<CompiledPattern<K>> compiledPatterns = new ArrayList<>();
         TreeMap<K, K> uniqueKeys = new TreeMap<>(keyComparator);
@@ -62,6 +64,12 @@ public final class ImmutableCraftingGraph<K> {
             for (PatternEntry<K> output : compiled.outputs()) {
                 if (pattern.craftableOutputs().contains(output.key())) {
                     index.computeIfAbsent(output.key(), ignored -> new ArrayList<>()).add(compiled);
+                } else {
+                    // A secondary output is not a selectable route, but firing the pattern for its
+                    // primary is a way to obtain it, and the only way when the primary is not wanted
+                    // for its own sake. Indexed separately so nothing that asks for a selectable route
+                    // starts seeing one that is not.
+                    secondary.computeIfAbsent(output.key(), ignored -> new ArrayList<>()).add(compiled);
                 }
             }
             for (PatternEntry<K> input : compiled.inputs()) {
@@ -69,8 +77,10 @@ public final class ImmutableCraftingGraph<K> {
             }
         }
         index.replaceAll((key, value) -> List.copyOf(value));
+        secondary.replaceAll((key, value) -> List.copyOf(value));
         this.patterns = List.copyOf(ordered);
         this.byOutput = Collections.unmodifiableNavigableMap(index);
+        this.bySecondaryOutput = Collections.unmodifiableMap(secondary);
         consumers.replaceAll((key, value) -> List.copyOf(value));
         this.byInput = Collections.unmodifiableMap(consumers);
         this.compiled = List.copyOf(compiledPatterns);
@@ -93,6 +103,15 @@ public final class ImmutableCraftingGraph<K> {
 
     List<CompiledPattern<K>> compiledPatternsFor(K output) {
         return byOutput.getOrDefault(output, List.of());
+    }
+
+    /**
+     * Patterns that yield {@code output} only as a secondary product. Empty for anything a recipe
+     * declares as a selectable route, so a caller can fall back to these without ever preferring a
+     * secondary over a route.
+     */
+    List<CompiledPattern<K>> secondaryRoutesFor(K output) {
+        return bySecondaryOutput.getOrDefault(output, List.of());
     }
 
     List<CompiledPattern<K>> consumersOf(K input) { return byInput.getOrDefault(input, List.of()); }

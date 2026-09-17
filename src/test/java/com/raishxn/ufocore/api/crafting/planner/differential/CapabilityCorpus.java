@@ -66,6 +66,7 @@ public final class CapabilityCorpus {
         addCoproductFeedsLaterStage(scenarios);
         addDeepChain(scenarios);
         addConversionRing(scenarios);
+        addSurplusSecondaryDemand(scenarios);
         addChanceRoute(scenarios);
         addSelfGrowth(scenarios);
         addRawFeedbackLoop(scenarios);
@@ -306,6 +307,29 @@ public final class CapabilityCorpus {
      * complete; the guaranteed answer is that eight {@code ore} are missing, because a chance route
      * promises nothing to a deterministic request.
      */
+    /**
+     * The target needs four of a secondary output but only one of the primary. Collecting the
+     * secondary only when the primary is wanted for its own sake yields one, so the producing pattern
+     * has to be fired three more times for the secondary alone. A planner that treats a secondary
+     * output as unrequestable reports the other three as impossible to obtain.
+     */
+    private static void addSurplusSecondaryDemand(List<CapabilityScenario> out) {
+        Map<String, UfoAmount> minimum = amounts(Map.of("ore", 4L));
+        threeModes(out, "byproduct/surplus-secondary-demand", CapabilityFamily.BYPRODUCT, 4, "finished",
+                UfoAmount.ONE, minimum, Map.of(), List.of(amounts(Map.of("ore", 4L))), true,
+                DAG_BYPRODUCT_MULTI_ROUTE, CapabilityExpectation.REQUIRED,
+                CapabilityCorpus::surplusSecondaryChain);
+    }
+
+    private static CapabilityGraph surplusSecondaryChain(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("refine", List.of(input("ore", 1)),
+                        List.of(primary("bloom", 1), byproduct("slag", 1))),
+                CapabilityPattern.of("assemble", List.of(input("bloom", 1), input("slag", 4)),
+                        List.of(primary("finished", 1))));
+        return graph(patterns, stock);
+    }
+
     private static void addChanceRoute(List<CapabilityScenario> out) {
         Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.PROBABILISTIC_OUTPUT);
         Map<String, UfoAmount> minimum = amounts(Map.of("raw", 8L, "ore", 8L));

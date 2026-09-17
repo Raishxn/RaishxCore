@@ -27,11 +27,14 @@ import java.util.function.LongSupplier;
  * with the smaller total leaf demand, computed bottom-up once per plan, so a correct plan is not
  * several times more expensive than it has to be. That is a preference, not a proof: the first
  * feasible plan is still returned, and general multi-route optimality under shared stock is not
- * claimed. Quantities are batched. Stateful feedback/catalyst optimization belongs to a separate
- * adapter, and is one: see {@link FeedbackCyclePlanner}, which states a recycling loop as a
- * decaying catalyst this planner can balance and rewrites the plan back to the real patterns. That
- * adapter composes with this one rather than being built into it, so a caller that does not want it
- * pays nothing for it.
+ * claimed. Quantities are batched. A key no recipe declares as something it makes is still planned
+ * when a recipe yields it as a secondary output, since firing that recipe for its primary is the only
+ * way to obtain it and naming the secondary as missing would name a key nobody can supply; a
+ * secondary is never preferred over a declared route. Stateful feedback/catalyst optimization
+ * belongs to a separate adapter, and is one: see {@link FeedbackCyclePlanner}, which states a
+ * recycling loop as a decaying catalyst this planner can balance and rewrites the plan back to the
+ * real patterns. That adapter composes with this one rather than being built into it, so a caller
+ * that does not want it pays nothing for it.
  */
 public final class IterativeCraftingPlanner<K> {
     private final LongSupplier nanoTime;
@@ -375,7 +378,15 @@ public final class IterativeCraftingPlanner<K> {
                                           State state, Map<K, Integer> ranks,
                                           Map<K, BigInteger> leafCosts, Budget budget) {
         ArrayList<Candidate<K>> options = new ArrayList<>();
-        for (CompiledPattern<K> pattern : graph.compiledPatternsFor(key)) {
+        List<CompiledPattern<K>> routes = graph.compiledPatternsFor(key);
+        if (routes.isEmpty()) {
+            // Nothing declares this key as something it makes. That is not the same as nothing being
+            // able to make it: a secondary product comes out of whatever makes its primary, so a
+            // shortage reported here would be a shortage of a key no one can buy rather than of the
+            // material that actually has to be supplied.
+            routes = graph.secondaryRoutesFor(key);
+        }
+        for (CompiledPattern<K> pattern : routes) {
             budget.operation(0);
             // A pattern that feeds itself only closes when it produces more than it consumes: that is
             // a growth step, and the material it needs is the seed it also makes. Refusing it, as the

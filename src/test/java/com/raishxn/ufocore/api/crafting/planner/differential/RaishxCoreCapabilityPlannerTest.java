@@ -64,8 +64,8 @@ class RaishxCoreCapabilityPlannerTest {
 
     @Test void acceptsEveryRepresentableScenario() {
         List<CapabilityScenario> required = CapabilityCorpus.required();
-        // 39 before the feedback, cycle and chance families were activated; all are representable now.
-        assertEquals(54, required.size());
+        // 39 before the feedback, cycle, chance and secondary-demand families were activated.
+        assertEquals(57, required.size());
         for (CapabilityScenario scenario : required) {
             assertTrue(planner.check(scenario).accepted(),
                     () -> scenario.label() + " must be admitted: " + planner.check(scenario).reason());

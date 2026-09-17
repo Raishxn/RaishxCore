@@ -239,9 +239,9 @@ rejected a plan that extracted ten units from a stock of eight.
 
 The corpus moves every family this document describes from a declared limitation to a required
 capability: self-growth and the conversion ring first, then both catalyst loops, then the chance
-route. `required supported=54/54 confirmed defects=0 limitation cases supported but not claimed=0/0`,
-with zero false positives and zero false negatives across all three material modes, over 54 cases in
-18 groups.
+route. `required supported=57/57 confirmed defects=0 limitation cases supported but not claimed=0/0`,
+with zero false positives and zero false negatives across all three material modes, over 57 cases in
+19 groups.
 
 The `MINIMAL_SHORTAGE_CASES` list gains the missing mode of each family as it lands, so the frontier
 is pinned rather than merely present. The refill path must complete, which is what proves a reported
@@ -255,7 +255,8 @@ With nothing declared, the refusal machinery is driven by a planner stub that de
 rather than by a family that happens to be missing: a capability that is never refused is a refusal
 path that is never tested, and leaving it to a family that happens to be missing is how it rots.
 
-RaishxCore is now optimal on all 18 missing-mode cases. ThunderboltV2 is optimal on 16, eight times
-over on `cycle/self-growth`, and does not answer the chance-output family at all. Claim level across
-the corpus is 36 complete and 18 shortage for RaishxCore, against 33 and 18 with three unanswered for
-the reference.
+RaishxCore is now optimal on all 19 missing-mode cases. ThunderboltV2 is optimal on 16, eight times
+over on `cycle/self-growth`, and reports a shortage on three feasible cases — self-growth at minimum
+stock and both byproduct modes where more secondary is wanted than the primary induces — as well as
+not answering the chance-output family at all. Claim level across the corpus is 38 complete and 19
+shortage for RaishxCore, against 33 and 21 with three unanswered for the reference.
