@@ -1,5 +1,6 @@
 package com.raishxn.ufocore.api.crafting.planner.differential;
 
+import com.moakiee.thunderbolt.core.crafting.pattern.ReusableStockSource;
 import com.moakiee.thunderbolt.core.crafting.planner.CraftGraph;
 import com.moakiee.thunderbolt.core.crafting.planner.CraftInput;
 import com.moakiee.thunderbolt.core.crafting.planner.CraftOutput;
@@ -109,7 +110,10 @@ public final class ThunderboltCapabilityPlanner implements CapabilityPlanner {
         long amount = input.amount().longValueExact();
         return switch (input.kind()) {
             case EXACT -> CraftInput.of(input.key(), amount);
-            case REUSABLE -> CraftInput.returned(input.key(), amount);
+            case REUSABLE -> CraftInput.returnedFrom(input.key(), amount,
+                    // The storage scope must match the scope the seed stock is declared under, or the
+                    // planner never finds the seed and reports a shortage the corpus does not expect.
+                    new ReusableStockSource(input.host(), input.host()));
             case FINITE_USE -> CraftInput.finiteUse(input.key(), amount, input.uses());
             case FUZZY -> throw new AdapterGap("fuzzy input " + input.key() + " in " + pattern.id());
             case EMITTER -> throw new AdapterGap("emitter input " + input.key() + " in " + pattern.id());
