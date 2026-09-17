@@ -132,16 +132,26 @@ These must never be presented as the reference suite's own results:
 Advisory findings do not fail the gate: a limitation that replayed successfully, and a shortage
 overhead above one on a required case. They are printed so they cannot be overlooked.
 
-## Open defects found by this corpus
+## Defect found and fixed by this corpus
 
-`DifferentialHarness.CONFIRMED_DEFECTS` records them; the gate keeps them visible.
-
-| Cases | Class | Cause |
+| Cases | Was | Cause and fix |
 | --- | --- | --- |
-| `byproduct/shared-coproduct/minimum`, `/unbounded`, `byproduct/feeds-later-stage/minimum`, `/unbounded` | `FALSE_NEGATIVE` | A demanded coproduct is resolved before the sibling route that produces it. A composite whose coproduct key sorts before its primary keys therefore reports an impossible shortage instead of running the producing route first. |
+| `byproduct/shared-coproduct/{minimum,unbounded}`, `byproduct/feeds-later-stage/{minimum,unbounded}` | `FALSE_NEGATIVE` | A demanded coproduct was resolved before the sibling route that produces it, so a composite whose coproduct key sorts before its routable keys reported an impossible shortage. `ImmutableCraftingGraph` now orders each pattern's inputs so that an input with a selectable route is resolved before an input that can only be collected as a deterministic coproduct. |
 
-The same cause makes the `MISSING` modes of those two groups report the coproduct as missing and
-inflate `missingOverhead` to 2.0 and 3.0 instead of 1.0.
+The same cause also inflated the `MISSING` modes of those two groups to `missingOverhead` 2.0 and
+3.0. All six cases now classify as `SUPPORTED`, both `MISSING` modes report exactly one known
+minimum at `missingOverhead = 1.000`, and `DifferentialHarness.CONFIRMED_DEFECTS` is empty again.
+The registry keeps working the same way: an unlisted defect fails the gate, and an entry that stops
+reproducing fails it too. `DifferentialHarnessGateTest` covers every branch of that logic.
+`PlannerConservationTest.collectsACoproductFromItsSiblingBranchBeforeDemandingIt` pins the fix.
+
+### Remaining byproduct boundary
+
+A coproduct is never a selectable route, matching `Ae2PlanningSnapshot`, where a captured pattern
+declares `craftableOutputs = Set.of(primary)`. A key that only ever appears as a secondary output is
+therefore still not planned, even when firing its producing pattern would collect it. That is
+asserted by `PlannerConservationTest.byproductsStayAvailableAndCannotBeSelectedAsAe2PrimaryOutputs`,
+and it belongs to the explicit output-role model of roadmap phase R2.3.
 
 ## Non-minimal shortage, recorded not asserted
 
@@ -152,7 +162,8 @@ multi-route Fibonacci case. It is printed as a finding, and the case is excluded
 
 ## Next steps
 
-1. Fix the coproduct ordering defect and delete its `CONFIRMED_DEFECTS` entries.
+1. Add a corpus case for the remaining byproduct boundary, with the output-role semantics it needs,
+   so the refusal is measured rather than only asserted by a unit test.
 2. Extend the corpus with the remaining reference-scale cases and the Raishx additional corpus
    (`BigInteger` extremes, wide graphs, probabilistic outputs, item plus fluid, lifecycle
    cancellation, concurrent grids).

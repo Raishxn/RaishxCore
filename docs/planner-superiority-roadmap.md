@@ -29,8 +29,9 @@ São proibidas comparações que:
 - quantidades `UfoAmount` baseadas em `BigInteger`, sem teto artificial de
   `long` no modelo matemático;
 - planner iterativo, sem estouro de stack em cadeia com profundidade 20.000;
-- batching exato, múltiplos outputs e subprodutos determinísticos quando o subproduto é resolvido
-  depois da rota que o produz (ver a limitação de ordenação em 2.2);
+- batching exato, múltiplos outputs e subprodutos determinísticos: a ordem canônica de inputs faz
+  uma entrada com rota selecionável ser resolvida antes de uma entrada que só existe como
+  subproduto, então o coproduto é coletado do ramo irmão que o produz;
 - replay de conservação em testes e benchmarks;
 - snapshots imutáveis e cacheados por revisão da grid;
 - deduplicação de requisições equivalentes em andamento;
@@ -61,11 +62,18 @@ server thread e pode consumir até o orçamento configurado antes do trabalho
 assíncrono começar.
 
 O corpus diferencial de 2026-09-16 (`docs/planner-differential-corpus.md`)
-confirmou uma falha concreta nessa fronteira: um subproduto exigido é resolvido
-antes da rota irmã que o produz. Um composto cujo coproduto ordena antes das
-chaves primárias recebe um faltante impossível em vez de executar a rota
-produtora primeiro. Os quatro casos afetados ficam registrados como defeito
-confirmado no harness e nunca são contados como suporte.
+encontrou e corrigiu uma falha concreta nessa fronteira: um subproduto exigido
+era resolvido antes da rota irmã que o produz, então um composto cujo coproduto
+ordena antes das chaves primárias recebia um faltante impossível. A ordem
+canônica de inputs passou a resolver entradas com rota antes de entradas que só
+existem como subproduto, e os quatro casos afetados saíram de `FALSE_NEGATIVE`
+para `SUPPORTED` com `missingOverhead` 1,000.
+
+Permanece fora do modelo: um subproduto nunca é rota selecionável, seguindo
+`Ae2PlanningSnapshot`, que captura `craftableOutputs = Set.of(primary)`. Uma
+chave que só aparece como saída secundária continua sem plano, mesmo quando
+executar o padrão produtor a coletaria (`PatternOutput.role` explícito é
+trabalho do R2.3).
 
 ### 2.3 Baseline do Thunderbolt V2 a superar
 
@@ -658,10 +666,10 @@ NBT ou referências à grid após lifecycle.
 ### Gate P — paridade
 
 Estado em 2026-09-16: corpus neutro, oráculo de replay, runner de produção,
-taxonomia e gate de CI concluídos; medidos apenas no RaishxCore (23/27
+taxonomia e gate de CI concluídos; medidos apenas no RaishxCore (27/27
 capacidades obrigatórias suportadas, 24 casos de limitação recusados na
-admissão, 4 casos com defeito confirmado). Nenhuma comparação com o Thunderbolt
-foi executada, portanto nenhuma afirmação de paridade é feita.
+admissão, nenhum defeito confirmado em aberto). Nenhuma comparação com o
+Thunderbolt foi executada, portanto nenhuma afirmação de paridade é feita.
 
 - [ ] 33/33 casos Thunderbolt `SUPPORTED` no RaishxCore.
 - [ ] Zero falso positivo, erro ou timeout não cooperativo.
@@ -724,6 +732,8 @@ Concluído e verificado neste recorte (`docs/planner-differential-corpus.md`):
 - [x] taxonomia de oito classificações mantidas em colunas separadas;
 - [x] harness determinístico e gate de CI (`./gradlew plannerDifferential`), com
       teste que detecta propositalmente um plano inválido;
+- [x] corrigir o defeito de ordenação de coproduto em 2.2: ordem canônica de
+      inputs resolve entradas com rota antes de entradas só-subproduto.
 
 Pendente no R2.1:
 
@@ -731,8 +741,7 @@ Pendente no R2.1:
       V2 e AE2 atrás do mesmo contrato;
 - [ ] produzir o relatório baseline dos quatro planners: RaishxCore,
       Thunderbolt V2, AE2-VM e AE2 original;
-- [ ] corpus adicional do Raishx descrito em 10.2;
-- [ ] corrigir o defeito de ordenação de coproduto registrado em 2.2.
+- [ ] corpus adicional do Raishx descrito em 10.2.
 
 ### R2.2 — captura cooperativa
 

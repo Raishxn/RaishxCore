@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.Set;
@@ -18,6 +19,11 @@ import java.util.Set;
 /**
  * Immutable crafting graph compiled once for one grid revision.
  * Pattern and ingredient iteration order is canonical and never depends on hash order.
+ *
+ * <p>Within one pattern, an input that has a selectable route is resolved before an input that has
+ * none. A deterministic coproduct is captured as a secondary output, so it is never a route: it can
+ * only be collected after the sibling branch that produces it has run. Resolving it in raw key order
+ * made a composite whose coproduct key sorts before its routable keys report an impossible shortage.
  */
 public final class ImmutableCraftingGraph<K> {
     private final long revision;
@@ -40,10 +46,14 @@ public final class ImmutableCraftingGraph<K> {
         TreeMap<K, List<CompiledPattern<K>>> consumers = new TreeMap<>(keyComparator);
         ArrayList<CompiledPattern<K>> compiledPatterns = new ArrayList<>();
         TreeMap<K, K> uniqueKeys = new TreeMap<>(keyComparator);
+        TreeSet<K> routable = new TreeSet<>(keyComparator);
         for (CraftingPattern<K> pattern : ordered) {
             Objects.requireNonNull(pattern, "pattern");
             if (!ids.add(pattern.id())) throw new IllegalArgumentException("duplicate pattern id: " + pattern.id());
-            CompiledPattern<K> compiled = compile(pattern, keyComparator);
+            routable.addAll(pattern.craftableOutputs());
+        }
+        for (CraftingPattern<K> pattern : ordered) {
+            CompiledPattern<K> compiled = compile(pattern, keyComparator, routable);
             compiledPatterns.add(compiled);
             for (K key : pattern.inputs().keySet()) checkKey(uniqueKeys, key);
             for (K key : pattern.outputs().keySet()) checkKey(uniqueKeys, key);
@@ -119,16 +129,28 @@ public final class ImmutableCraftingGraph<K> {
     }
 
     private static <K> CompiledPattern<K> compile(CraftingPattern<K> pattern,
-                                                   Comparator<? super K> comparator) {
-        return new CompiledPattern<>(pattern, entries(pattern.inputs(), comparator),
-                entries(pattern.outputs(), comparator));
+                                                   Comparator<? super K> comparator, Set<K> routable) {
+        return new CompiledPattern<>(pattern, entries(pattern.inputs(), comparator, routable),
+                entries(pattern.outputs(), comparator, null));
     }
 
+    /**
+     * Canonical entry order. When {@code routableFirst} is given, inputs with a selectable route come
+     * before inputs that can only be collected as a deterministic coproduct of a sibling branch.
+     */
     private static <K> List<PatternEntry<K>> entries(Map<K, UfoAmount> amounts,
-                                                      Comparator<? super K> comparator) {
+                                                      Comparator<? super K> comparator,
+                                                      Set<K> routableFirst) {
         ArrayList<PatternEntry<K>> entries = new ArrayList<>(amounts.size());
         amounts.forEach((key, amount) -> entries.add(new PatternEntry<>(key, amount)));
-        entries.sort((left, right) -> comparator.compare(left.key(), right.key()));
+        entries.sort((left, right) -> {
+            if (routableFirst != null) {
+                boolean leftRoutable = routableFirst.contains(left.key());
+                boolean rightRoutable = routableFirst.contains(right.key());
+                if (leftRoutable != rightRoutable) return leftRoutable ? -1 : 1;
+            }
+            return comparator.compare(left.key(), right.key());
+        });
         return List.copyOf(entries);
     }
 

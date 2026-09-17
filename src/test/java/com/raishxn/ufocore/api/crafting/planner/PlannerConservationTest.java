@@ -83,6 +83,20 @@ class PlannerConservationTest {
         }
     }
 
+    @Test void collectsACoproductFromItsSiblingBranchBeforeDemandingIt() {
+        // "coupler" sorts before "part", so raw key order demanded the coproduct before the route
+        // that produces it and reported an impossible shortage instead of collecting it.
+        var makePart = new CraftingPattern<>("make-part", 0, amounts(Map.of("raw", 1L)),
+                amounts(Map.of("part", 1L, "coupler", 1L)), java.util.Set.of("part"));
+        var assemble = new CraftingPattern<>("assemble", 0, amounts(Map.of("coupler", 1L, "part", 1L)),
+                Map.of("target", UfoAmount.ONE));
+        var result = run(List.of(makePart, assemble), "target", 1, Map.of("raw", 1L));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status());
+        assertEquals(UfoAmount.ONE, result.plan().patternExecutions().get(makePart));
+        verify(result.plan());
+    }
+
     @Test void byproductsStayAvailableAndCannotBeSelectedAsAe2PrimaryOutputs() {
         var both = new CraftingPattern<>("a-and-b", 0, amounts(Map.of("raw", 1L)),
                 amounts(Map.of("a", 1L, "b", 1L)), java.util.Set.of("a"));

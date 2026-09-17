@@ -47,8 +47,8 @@ performance.
 - [x] Add a neutral capability corpus, a common replay oracle, a production-path runner, the
       eight-way classification taxonomy and a deterministic CI gate (`plannerDifferential`,
       `docs/planner-differential-corpus.md`).
-- [x] Classify the RaishxCore baseline alone: 23/27 required cases supported, 24 declared limitation
-      cases refused at admission, 4 cases recorded as confirmed defects.
+- [x] Classify the RaishxCore baseline alone: 27/27 required cases supported, 24 declared limitation
+      cases refused at admission, no open confirmed defect.
 - [ ] Run one differential capability/performance corpus against AE2 and
       Thunderbolt V2 before making comparative performance or quality claims;
       include AE2-VM as the specialized deep-chain/JIT baseline
@@ -56,8 +56,10 @@ performance.
 - [ ] Reproduce the Thunderbolt 11-group/33-case reference suite through both
       planners' production entry points, including replay and material modes
       (recreated as an independent 17-group/51-case specification; no reference adapter yet).
-- [ ] Fix the coproduct-ordering false negative found by the corpus: a demanded byproduct is
-      resolved before the sibling route that produces it.
+- [x] Fix the coproduct-ordering false negative found by the corpus: an input with a selectable
+      route is now resolved before an input that only exists as a deterministic coproduct.
+- [ ] Model explicit output roles so a coproduct whose producing pattern is not otherwise demanded
+      can still be collected, instead of being refused.
 - [ ] Model alternatives/fuzzy inputs, remainders, catalysts, finite
       durability, emitters, probabilistic outputs and feedback SCCs explicitly.
 - [ ] Add a bounded global integer solver for multi-route conflicts while

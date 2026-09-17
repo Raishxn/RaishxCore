@@ -32,29 +32,17 @@ public final class DifferentialHarness {
         }
     }
 
-    private static final String BYPRODUCT_ORDER_DEFECT =
-            "a demanded byproduct is resolved before the sibling route that produces it, so a "
-                    + "composite whose coproduct key sorts before its primary keys reports an "
-                    + "impossible shortage instead of running the producing route first";
-
     /**
      * Defects already observed and deliberately not hidden. The gate fails when an unlisted defect
      * appears and also when a listed entry stops being a defect, so the list can never go stale and
      * a new regression can never hide behind it.
      *
-     * <p>Every entry below is a false negative on a capability the corpus lists as required. The
-     * cases stay classified as {@link CapabilityClassification#FALSE_NEGATIVE}; a limitation is never
-     * counted as support, and no scenario is removed or weakened to make the corpus pass.
+     * <p>An entry is registered only as a last resort, always names the exact scenario label, the
+     * observed classification and the reason, and never turns a limitation into support or removes a
+     * scenario. The coproduct-ordering false negative this corpus revealed is no longer here: it is
+     * fixed in {@code ImmutableCraftingGraph}'s canonical input order.
      */
-    public static final List<ConfirmedDefect> CONFIRMED_DEFECTS = List.of(
-            new ConfirmedDefect("byproduct/shared-coproduct/minimum",
-                    CapabilityClassification.FALSE_NEGATIVE, BYPRODUCT_ORDER_DEFECT),
-            new ConfirmedDefect("byproduct/shared-coproduct/unbounded",
-                    CapabilityClassification.FALSE_NEGATIVE, BYPRODUCT_ORDER_DEFECT),
-            new ConfirmedDefect("byproduct/feeds-later-stage/minimum",
-                    CapabilityClassification.FALSE_NEGATIVE, BYPRODUCT_ORDER_DEFECT),
-            new ConfirmedDefect("byproduct/feeds-later-stage/unbounded",
-                    CapabilityClassification.FALSE_NEGATIVE, BYPRODUCT_ORDER_DEFECT));
+    public static final List<ConfirmedDefect> CONFIRMED_DEFECTS = List.of();
 
     private static Map<String, ConfirmedDefect> defectsByLabel() {
         LinkedHashMap<String, ConfirmedDefect> byLabel = new LinkedHashMap<>();
@@ -181,9 +169,13 @@ public final class DifferentialHarness {
 
         /** Admission and classification gate applied by the CI harness. */
         public Gate gate() {
+            return gate(defectsByLabel());
+        }
+
+        /** Same gate against an explicit defect registry, so both branches stay directly testable. */
+        Gate gate(Map<String, ConfirmedDefect> defects) {
             ArrayList<String> failures = new ArrayList<>();
             ArrayList<String> findings = new ArrayList<>();
-            Map<String, ConfirmedDefect> defects = defectsByLabel();
             java.util.HashSet<String> observed = new java.util.HashSet<>();
             for (Entry entry : entries) {
                 String label = entry.id() + "/" + entry.mode().name().toLowerCase(Locale.ROOT);

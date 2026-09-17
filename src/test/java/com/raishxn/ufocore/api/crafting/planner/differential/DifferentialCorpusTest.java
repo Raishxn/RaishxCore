@@ -24,10 +24,9 @@ import org.junit.jupiter.api.Test;
 class DifferentialCorpusTest {
 
     /**
-     * Canonical cases whose known minimum must be reported exactly. Infeasible-byproduct cases are
-     * excluded because of the confirmed coproduct-ordering defect, and the multi-route Fibonacci
-     * frontier is excluded because only one witness is retained, so its ratio is a denominator and
-     * not a claim about the true frontier.
+     * Canonical cases whose known minimum must be reported exactly. The multi-route Fibonacci
+     * frontier is absent because only one witness is retained, so its ratio is a denominator and not
+     * a claim about the true frontier.
      */
     private static final List<String> MINIMAL_SHORTAGE_CASES = List.of(
             "single-dag/dispersed",
@@ -35,6 +34,8 @@ class DifferentialCorpusTest {
             "multi-dag/sibling-routes",
             "multi-dag/greedy-trap",
             "batching/multi-output",
+            "byproduct/shared-coproduct",
+            "byproduct/feeds-later-stage",
             "deep-chain/linear-20000");
 
     private static DifferentialHarness.Report report;
@@ -75,7 +76,7 @@ class DifferentialCorpusTest {
             }
         }
         assertTrue(unresolved.isEmpty(), () -> "unresolved required capabilities: " + unresolved);
-        assertEquals(23, report.supportedRequired());
+        assertEquals(27, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
