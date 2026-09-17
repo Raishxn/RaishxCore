@@ -2,6 +2,7 @@ package com.raishxn.ufocore.benchmark;
 
 import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.api.crafting.planner.*;
+import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.math.BigInteger;
 import java.nio.file.Files;
@@ -16,6 +17,12 @@ public final class PlannerBenchmark {
     private static final int SAMPLES = 25;
     private static volatile Object blackhole;
     private static final PlanningLimits LIMITS = new PlanningLimits(10_000_000, 100_000, Duration.ofSeconds(2), 128);
+    /** Recorded baseline the gate compares against; regenerate with {@code update-baseline}. */
+    private static final Path BASELINE = Path.of("src", "benchmark", "baseline", "planner-baseline.csv");
+    /** Wall time depends on the machine, so this only catches a catastrophic regression. */
+    private static final double TIME_TOLERANCE = 4.0;
+    /** Allocation per operation is byte-exact, so a fifth more already means something changed. */
+    private static final double ALLOCATION_TOLERANCE = 1.20;
 
     public record Scenario(String name, List<CraftingPattern<String>> patterns, String target, UfoAmount amount,
                             Map<String, UfoAmount> stock, boolean expectedComplete) {}
@@ -31,17 +38,20 @@ public final class PlannerBenchmark {
         if (bean.isThreadAllocatedMemorySupported() && !bean.isThreadAllocatedMemoryEnabled()) {
             bean.setThreadAllocatedMemoryEnabled(true);
         }
-        Reference reference = args.length > 1 ? (Reference) Class.forName(
+        Reference reference = args.length > 1 && "compare".equals(args[1]) ? (Reference) Class.forName(
                 "com.raishxn.ufocore.benchmark.ThunderboltReference").getConstructor().newInstance() : null;
         List<String> rows = new ArrayList<>();
         rows.add("engine,scenario,phase,patterns,p50_us,p95_us,allocated_bytes_per_op,status,valid,expected_complete,executions,used_units,missing_units,surplus_units");
+        Map<String, Measurement> measured = new TreeMap<>();
         for (Scenario scenario : scenarios()) {
             for (boolean cold : new boolean[]{false, true}) {
                 String phase = cold ? "graph_and_plan" : "cached_graph_plan";
-                rows.add(measure("RaishxCore", scenario, phase, core(scenario, cold), bean));
+                Measurement own = measure("RaishxCore", scenario, phase, core(scenario, cold), bean);
+                rows.add(own.row);
+                measured.put(own.key(), own);
                 if (reference != null && scenario.amount().bitLength() < 63
                         && scenario.stock().values().stream().allMatch(value -> value.bitLength() < 63)) {
-                    rows.add(measure("ThunderboltV2", scenario, phase, reference.prepare(scenario, cold), bean));
+                    rows.add(measure("ThunderboltV2", scenario, phase, reference.prepare(scenario, cold), bean).row);
                 }
             }
         }
@@ -52,9 +62,12 @@ public final class PlannerBenchmark {
                 + " OS=" + System.getProperty("os.name") + " ARCH=" + System.getProperty("os.arch")
                 + " CPUS=" + Runtime.getRuntime().availableProcessors() + " warmup=" + WARMUP + " samples=" + SAMPLES);
         System.out.println("CSV=" + output.toAbsolutePath());
+        if (!gate(measured, Arrays.asList(args).contains("update-baseline"))) {
+            System.exit(1);
+        }
     }
 
-    private static String measure(String engine, Scenario scenario, String phase, Supplier<Outcome> operation,
+    private static Measurement measure(String engine, Scenario scenario, String phase, Supplier<Outcome> operation,
                                    com.sun.management.ThreadMXBean bean) {
         for (int i = 0; i < WARMUP; i++) blackhole = operation.get();
         long thread = Thread.currentThread().threadId();
@@ -72,14 +85,82 @@ public final class PlannerBenchmark {
         }
         Arrays.sort(nanos);
         var replay = replay(scenario, result);
+        long allocatedPerOp = bean.isThreadAllocatedMemorySupported() ? allocated / SAMPLES : -1;
+        double p50 = nanos[SAMPLES / 2] / 1000.0;
+        double p95 = nanos[(int) Math.ceil(SAMPLES * .95) - 1] / 1000.0;
         String row = String.format(Locale.ROOT, "%s,%s,%s,%d,%.3f,%.3f,%d,%s,%s,%s,%s,%s,%s,%s",
-                engine, scenario.name(), phase, scenario.patterns().size(), nanos[SAMPLES / 2] / 1000.0,
-                nanos[(int) Math.ceil(SAMPLES * .95) - 1] / 1000.0,
-                bean.isThreadAllocatedMemorySupported() ? allocated / SAMPLES : -1,
+                engine, scenario.name(), phase, scenario.patterns().size(), p50, p95, allocatedPerOp,
                 result.status(), replay.valid, scenario.expectedComplete(), sum(result.runs()),
                 sum(result.stock()), sum(result.missing()), replay.surplus);
         System.out.println(row);
-        return row;
+        return new Measurement(engine, scenario.name(), phase, p50, allocatedPerOp, row);
+    }
+
+    /** One measured row, kept structured so the gate does not have to re-parse the CSV it just wrote. */
+    private record Measurement(String engine, String scenario, String phase, double p50Micros,
+                               long allocatedPerOp, String row) {
+        String key() {
+            return scenario + "|" + phase;
+        }
+    }
+
+    /**
+     * Compares this run against the recorded baseline.
+     *
+     * <p>Allocation per operation is byte-exact and does not depend on the machine, so it is gated
+     * tightly: it catches an accidental extra copy or an eager conversion long before wall time
+     * moves. Wall time does depend on the machine and on what else the runner is doing, so it is
+     * gated loosely and only meant to catch a catastrophic regression rather than a few percent.
+     */
+    private static boolean gate(Map<String, Measurement> measured, boolean update) throws IOException {
+        if (update) {
+            List<String> lines = new ArrayList<>();
+            lines.add("scenario,phase,p50_us,allocated_bytes_per_op");
+            for (Measurement measurement : measured.values()) {
+                lines.add(String.format(Locale.ROOT, "%s,%s,%.3f,%d", measurement.scenario(),
+                        measurement.phase(), measurement.p50Micros(), measurement.allocatedPerOp()));
+            }
+            Files.createDirectories(BASELINE.getParent());
+            Files.write(BASELINE, lines);
+            System.out.println("BASELINE=" + BASELINE.toAbsolutePath());
+            return true;
+        }
+        if (!Files.exists(BASELINE)) {
+            System.out.println("BASELINE=absent, nothing to compare against; "
+                    + "rerun with update-baseline to record one");
+            return true;
+        }
+        Map<String, double[]> expected = new LinkedHashMap<>();
+        for (String line : Files.readAllLines(BASELINE)) {
+            if (line.isBlank() || line.startsWith("scenario")) continue;
+            String[] parts = line.split(",");
+            if (parts.length < 4) continue;
+            expected.put(parts[0] + "|" + parts[1],
+                    new double[]{Double.parseDouble(parts[2]), Double.parseDouble(parts[3])});
+        }
+        List<String> failures = new ArrayList<>();
+        int compared = 0;
+        for (Measurement measurement : measured.values()) {
+            double[] baseline = expected.get(measurement.key());
+            if (baseline == null) continue;
+            compared++;
+            if (baseline[1] > 0 && measurement.allocatedPerOp() > baseline[1] * ALLOCATION_TOLERANCE) {
+                failures.add(String.format(Locale.ROOT, "%s %s allocated %d bytes/op, baseline %d (%.2fx)",
+                        measurement.scenario(), measurement.phase(), measurement.allocatedPerOp(),
+                        (long) baseline[1], measurement.allocatedPerOp() / baseline[1]));
+            }
+            if (baseline[0] > 0 && measurement.p50Micros() > baseline[0] * TIME_TOLERANCE) {
+                failures.add(String.format(Locale.ROOT, "%s %s p50 %.1fus, baseline %.1fus (%.2fx)",
+                        measurement.scenario(), measurement.phase(), measurement.p50Micros(),
+                        baseline[0], measurement.p50Micros() / baseline[0]));
+            }
+        }
+        if (failures.isEmpty()) {
+            System.out.println("GATE PASSED against " + compared + " baseline rows");
+            return true;
+        }
+        failures.forEach(failure -> System.out.println("GATE FAILED: " + failure));
+        return false;
     }
 
     private static Supplier<Outcome> core(Scenario scenario, boolean cold) {

@@ -59,6 +59,7 @@ jobs:
             build/libs/*.jar
             build/reports/tests
             build/reports/planner
+            src/benchmark/baseline/planner-baseline.csv
             run/logs/latest.log
 
   # AE2 compatibility. The declared range is [19.2.17,20), so the only released version inside it is

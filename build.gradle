@@ -104,6 +104,17 @@ tasks.register('plannerBenchmark', JavaExec) {
     jvmArgs '-Xms256m', '-Xmx1g'
 }
 
+// Records the baseline the regression gate compares against. Run this only after a deliberate
+// change, and read the diff: it is the record of what the planner is expected to cost.
+tasks.register('plannerBenchmarkBaseline', JavaExec) {
+    group = 'verification'
+    description = 'Records the planner benchmark baseline used by the regression gate.'
+    classpath = sourceSets.benchmark.runtimeClasspath
+    mainClass = 'com.raishxn.ufocore.benchmark.PlannerBenchmark'
+    args layout.buildDirectory.file('reports/planner/benchmark.csv').get().asFile.absolutePath, 'update-baseline'
+    jvmArgs '-Xms256m', '-Xmx1g'
+}
+
 // Compile only the unmodified pure V2 planner and its javac-discovered dependencies from
 // a local reference checkout. This reference code is never included in a RaishxCore jar.
 def thunderboltSources = providers.gradleProperty('thunderboltSource')
