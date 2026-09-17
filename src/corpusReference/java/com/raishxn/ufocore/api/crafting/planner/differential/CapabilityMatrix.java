@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
@@ -73,7 +74,39 @@ public final class CapabilityMatrix {
         appendCounts(text, core, reference, claimsA, claimsB);
         appendShortageQuality(text, core, reference, byA, byB, claimsA, claimsB);
         appendReferenceVerdict(text, core, claimsA, claimsB);
+        appendPerformance(text);
         return text.toString();
+    }
+
+    /**
+     * Performance is measured by a separate task, so this section reproduces it when the benchmark has
+     * already run and says plainly when it has not. The roadmap asks for one reproducible report
+     * covering capability, quality and cost; a matrix without the numbers is half of it.
+     */
+    private static void appendPerformance(StringBuilder text) {
+        Path csv = Path.of("build", "reports", "planner", "benchmark.csv");
+        text.append("\n== performance (from plannerBenchmark) ==\n");
+        if (!Files.exists(csv)) {
+            text.append("not measured in this run: execute plannerBenchmark first\n");
+            return;
+        }
+        List<String> rows;
+        try {
+            rows = Files.readAllLines(csv);
+        } catch (IOException unreadable) {
+            text.append("unreadable: ").append(unreadable).append('\n');
+            return;
+        }
+        text.append(String.format(Locale.ROOT, "%-14s %-28s %12s %12s %14s%n",
+                "engine", "scenario/phase", "p50_us", "p95_us", "alloc_bytes_op"));
+        for (String row : rows) {
+            String[] parts = row.split(",");
+            if (parts.length < 7 || "engine".equals(parts[0])) continue;
+            text.append(String.format(Locale.ROOT, "%-14s %-28s %12s %12s %14s%n",
+                    parts[0], parts[1] + "/" + parts[2], parts[4], parts[5], parts[6]));
+        }
+        text.append("\nplannerBenchmark gates these against a recorded baseline; this report only\n")
+                .append("reproduces them alongside the capability and shortage evidence above\n");
     }
 
     /**
