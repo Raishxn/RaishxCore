@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-23 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 69 cases.
+25 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 75 cases.
 
-Representable today and therefore `REQUIRED`, 69 cases:
+Representable today and therefore `REQUIRED`, 75 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -101,7 +101,9 @@ Representable today and therefore `REQUIRED`, 69 cases:
 | `catalyst/secondary-through-catalyst` | a secondary chased through a recipe carrying a catalyst |
 | `durability/finite-use-chain` | a carrier that survives a limited number of firings |
 | `durability/reuse-across-expansions` | a carrier budget shared across two expansions |
+| `durability/catalyst-and-carrier` | a catalyst and a carrier on one recipe, expanded twice |
 | `fuzzy/variant-route` | a slot any of several variants may satisfy |
+| `fuzzy/secondary-with-variant` | a fuzzy slot and a secondary output, expanded twice |
 | `emitter/authorized-stream` | an input an authorized external source supplies |
 | `probabilistic/chance-route` | a chance route that must not be promised to a request |
 
@@ -239,7 +241,7 @@ why the assertions are on deterministic invariants and the benchmark gates the n
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 23 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 25 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.

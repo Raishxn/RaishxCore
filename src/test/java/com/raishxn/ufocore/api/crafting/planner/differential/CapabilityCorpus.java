@@ -71,6 +71,8 @@ public final class CapabilityCorpus {
         addSurplusSecondaryDemand(scenarios);
         addSecondaryThroughCatalyst(scenarios);
         addDurabilityAcrossExpansions(scenarios);
+        addCatalystWithCarrier(scenarios);
+        addFuzzyWithSecondary(scenarios);
         addWeightedShortage(scenarios);
         addWeightedLeafCost(scenarios);
         addChanceRoute(scenarios);
@@ -325,6 +327,90 @@ public final class CapabilityCorpus {
      * for. A carrier budget divided between the two expansions instead of across the whole plan looks
      * like a shortage of tools where two are enough for four firings.
      */
+    /**
+     * A catalyst and a durable carrier on the same recipe, and the recipe is expanded twice because a
+     * secondary output is chased separately. Both kinds of carrier are now shared across the plan, and
+     * this is where the two sharing rules meet: the catalyst is present once, while the tool budget is
+     * divided by the total firings.
+     */
+    private static void addCatalystWithCarrier(List<CapabilityScenario> out) {
+        Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
+                CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.REUSABLE_INPUT,
+                CapabilitySemantics.FINITE_DURABILITY);
+        Map<String, UfoAmount> minimum = amounts(Map.of("ore", 4L, "tool", 2L, "catalyst", 1L));
+        Map<String, UfoAmount> starved = amounts(Map.of("ore", 4L));
+        threeModes(out, "durability/catalyst-and-carrier", CapabilityFamily.FINITE_DURABILITY, 2,
+                "finished", UfoAmount.ONE, minimum, starved,
+                List.of(amounts(Map.of("tool", 2L, "catalyst", 1L))), true, semantics,
+                CapabilityExpectation.REQUIRED, CapabilityCorpus::catalystAndCarrier);
+    }
+
+    private static CapabilityGraph catalystAndCarrier(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("refine",
+                        List.of(CapabilityInput.reusable("catalyst", 1, "refine"), input("ore", 1),
+                                CapabilityInput.finiteUse("tool", 1, 2)),
+                        List.of(primary("bloom", 1), byproduct("slag", 1))),
+                CapabilityPattern.of("assemble", List.of(input("bloom", 1), input("slag", 4)),
+                        List.of(primary("finished", 1))));
+        return graph(patterns, stock);
+    }
+
+    /**
+     * A fuzzy slot and a secondary output on the same recipe, expanded twice for the same reason. The
+     * slot accepts a damaged tool, so presence is the total across what it accepts, and the recipe must
+     * not be charged for the tool again just because it ran twice.
+     */
+    private static void addFuzzyWithSecondary(List<CapabilityScenario> out) {
+        Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.FUZZY_ALTERNATIVES,
+                CapabilitySemantics.DETERMINISTIC_BYPRODUCT);
+        String host = "polish-host";
+        List<String> variants = List.of("logical_tool", "damaged_tool");
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("polish",
+                        List.of(CapabilityInput.fuzzy("logical_tool", 1, host, variants), input("ingot", 1)),
+                        List.of(primary("plate", 1), byproduct("filings", 1))),
+                CapabilityPattern.of("assemble", List.of(input("plate", 1), input("filings", 4)),
+                        List.of(primary("gear", 1))));
+        Map<String, UfoAmount> unboundedIngots = amounts(Map.of("ingot", UNBOUNDED.asBigInteger().longValue()));
+        String id = "fuzzy/secondary-with-variant";
+        addScenario(out, id, CapabilityFamily.FUZZY_VARIANT, 4, CapabilityMaterialMode.MISSING,
+                fuzzySecondaryGraph(patterns, host, amounts(Map.of("ingot", 4L)), Map.of()), "gear",
+                UfoAmount.ONE, false, List.of(amounts(Map.of("logical_tool", 1L))), semantics,
+                CapabilityExpectation.REQUIRED,
+                // Exactly the reported shortage and nothing else: handing the refill a damaged tool as
+                // well would let it pass on a variant the report never asked for, which is the check
+                // this path exists to make.
+                supplied -> fuzzySecondaryGraph(patterns, host, amounts(Map.of("ingot", 4L)), supplied));
+        addScenario(out, id, CapabilityFamily.FUZZY_VARIANT, 4, CapabilityMaterialMode.MINIMUM,
+                fuzzySecondaryGraph(patterns, host, amounts(Map.of("ingot", 4L)),
+                        amounts(Map.of("damaged_tool", 1L))), "gear", UfoAmount.ONE, true, List.of(),
+                semantics, CapabilityExpectation.REQUIRED,
+                supplied -> fuzzySecondaryGraph(patterns, host, amounts(Map.of("ingot", 4L)),
+                        merge(amounts(Map.of("damaged_tool", 1L)), supplied)));
+        addScenario(out, id, CapabilityFamily.FUZZY_VARIANT, 4, CapabilityMaterialMode.UNBOUNDED,
+                fuzzySecondaryGraph(patterns, host, unboundedIngots,
+                        amounts(Map.of("damaged_tool", UNBOUNDED.asBigInteger().longValue()))),
+                "gear", UfoAmount.ONE, true, List.of(), semantics, CapabilityExpectation.REQUIRED,
+                supplied -> fuzzySecondaryGraph(patterns, host, unboundedIngots,
+                        merge(amounts(Map.of("damaged_tool", UNBOUNDED.asBigInteger().longValue())),
+                                supplied)));
+    }
+
+    private static CapabilityGraph fuzzySecondaryGraph(List<CapabilityPattern> patterns, String host,
+                                                       Map<String, UfoAmount> consumables,
+                                                       Map<String, UfoAmount> reusable) {
+        LinkedHashMap<String, CapabilityGraph.CapabilityStock> entries =
+                new LinkedHashMap<>(consumable(consumables));
+        reusable.forEach((key, value) -> {
+            if (!value.isZero()) {
+                entries.put(key, new CapabilityGraph.CapabilityStock(value,
+                        CapabilityGraph.CapabilityStock.Kind.REUSABLE, host));
+            }
+        });
+        return new CapabilityGraph(patterns, entries);
+    }
+
     private static void addDurabilityAcrossExpansions(List<CapabilityScenario> out) {
         Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
                 CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.FINITE_DURABILITY);

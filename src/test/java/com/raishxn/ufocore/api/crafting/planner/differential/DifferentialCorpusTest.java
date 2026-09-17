@@ -66,7 +66,9 @@ class DifferentialCorpusTest {
             // avoiding. Without it the report asked for the material worth a hundred times more.
             "multi-dag/weighted-shortage",
             "multi-dag/weighted-leaf-cost",
-            "durability/reuse-across-expansions");
+            "durability/reuse-across-expansions",
+            "durability/catalyst-and-carrier",
+            "fuzzy/secondary-with-variant");
 
     private static DifferentialHarness.Report report;
 
@@ -86,8 +88,8 @@ class DifferentialCorpusTest {
         for (DifferentialHarness.Entry entry : report.entries()) {
             modes.computeIfAbsent(entry.id(), ignored -> new LinkedHashSet<>()).add(entry.mode());
         }
-        assertEquals(23, modes.size());
-        assertEquals(69, report.entries().size());
+        assertEquals(25, modes.size());
+        assertEquals(75, report.entries().size());
         modes.forEach((id, present) -> assertEquals(Set.of(CapabilityMaterialMode.values()), present,
                 () -> id + " must run in every material mode"));
     }
@@ -113,7 +115,7 @@ class DifferentialCorpusTest {
         // a key that is being expanded, and the leaf-cost pass already leaves keys on a cycle out of
         // the cost map rather than failing, so the ring was a safe decline that turned out to be a
         // capability the engine had all along and never claimed.
-        assertEquals(69, report.supportedRequired());
+        assertEquals(75, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
@@ -122,7 +124,7 @@ class DifferentialCorpusTest {
         assertEquals(0L, counts.get(CapabilityClassification.ENGINE_ERROR), report::render);
         assertEquals(0L, counts.get(CapabilityClassification.NON_COOPERATIVE_TIMEOUT), report::render);
         assertEquals(0L, counts.get(CapabilityClassification.ENGINE_TIMEOUT), report::render);
-        assertEquals(69L, counts.values().stream().mapToLong(Long::longValue).sum());
+        assertEquals(75L, counts.values().stream().mapToLong(Long::longValue).sum());
     }
 
     @Test void declaredLimitationsAreNeverCountedAsSupport() {
