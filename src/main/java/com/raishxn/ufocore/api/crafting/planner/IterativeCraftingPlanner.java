@@ -23,8 +23,12 @@ import java.util.function.LongSupplier;
  * Exact, stack-safe planner over immutable snapshots.
  * Single-route DAGs aggregate demands in topological order. Other graphs use explicit
  * continuations and a reversible journal, including choices that conflict with later siblings.
- * Selection is deterministic; the first feasible plan is returned, not a claim of global optimality.
- * Quantities are batched. Stateful feedback/catalyst optimization belongs to a separate adapter.
+ * Selection is deterministic. Between routes that are otherwise equally viable it prefers the one
+ * with the smaller total leaf demand, computed bottom-up once per plan, so a correct plan is not
+ * several times more expensive than it has to be. That is a preference, not a proof: the first
+ * feasible plan is still returned, and general multi-route optimality under shared stock is not
+ * claimed. Quantities are batched. Stateful feedback/catalyst optimization belongs to a separate
+ * adapter.
  */
 public final class IterativeCraftingPlanner<K> {
     private final LongSupplier nanoTime;
@@ -45,10 +49,11 @@ public final class IterativeCraftingPlanner<K> {
                 planDag(graph, request, state, budget);
             } else {
                 Map<K, Integer> ranks = reachability(graph, request, budget);
-                if (!search(graph, request, state, ranks, budget, false)) {
+                Map<K, BigInteger> leafCosts = leafCosts(graph, budget);
+                if (!search(graph, request, state, ranks, leafCosts, budget, false)) {
                     // Shortage reporting starts from a fresh snapshot, never speculative leftovers.
                     state = new State(graph, request);
-                    search(graph, request, state, ranks, budget, true);
+                    search(graph, request, state, ranks, leafCosts, budget, true);
                 }
             }
             budget.check();
@@ -135,8 +140,97 @@ public final class IterativeCraftingPlanner<K> {
         return ranks;
     }
 
+    /**
+     * Minimum total leaf demand needed to obtain one unit of every key, computed bottom-up over the
+     * acyclic part of the graph.
+     *
+     * <p>Choosing between two viable routes otherwise looks one level deep, so a narrow and a wide
+     * route tie on input count and an identifier breaks the tie. A plan can then be correct and
+     * still ask the player for several times the material it needs: on the multi-route Fibonacci
+     * corpus case the reported shortage was 6.857 times the known minimum. Leaf demand is the
+     * quantity shortage quality is measured with, so it has to drive the choice.
+     *
+     * <p>A key nothing produces is one unit of shortage. A pattern's cost is the sum of its inputs'
+     * costs divided by how much it yields, rounded up, because a fractional unit cannot be supplied.
+     * Keys and patterns on a cycle never resolve and stay absent, so they keep the previous ordering.
+     */
+    private Map<K, BigInteger> leafCosts(ImmutableCraftingGraph<K> graph, Budget budget) {
+        Map<K, BigInteger> costs = new HashMap<>();
+        Map<CompiledPattern<K>, Integer> unresolvedInputs = new IdentityHashMap<>();
+        Map<CompiledPattern<K>, BigInteger> inputTotals = new IdentityHashMap<>();
+        Map<K, Integer> unresolvedProducers = new HashMap<>();
+        Set<K> keys = new HashSet<>();
+
+        for (CompiledPattern<K> pattern : graph.compiledPatterns()) {
+            budget.operation(0);
+            unresolvedInputs.put(pattern, pattern.inputs().size());
+            inputTotals.put(pattern, BigInteger.ZERO);
+            for (PatternEntry<K> input : pattern.inputs()) {
+                keys.add(input.key());
+            }
+            for (PatternEntry<K> output : pattern.outputs()) {
+                keys.add(output.key());
+                unresolvedProducers.merge(output.key(), 1, Integer::sum);
+            }
+        }
+
+        ArrayDeque<K> finalized = new ArrayDeque<>();
+        for (K key : keys) {
+            if (unresolvedProducers.getOrDefault(key, 0) == 0) {
+                costs.put(key, BigInteger.ONE);
+                finalized.add(key);
+            }
+        }
+
+        while (!finalized.isEmpty()) {
+            K key = finalized.removeFirst();
+            BigInteger cost = costs.get(key);
+            for (CompiledPattern<K> pattern : graph.consumersOf(key)) {
+                budget.operation(0);
+                BigInteger units = BigInteger.ZERO;
+                int matches = 0;
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    if (input.key().equals(key)) {
+                        units = units.add(input.amount().asBigInteger());
+                        matches++;
+                    }
+                }
+                if (matches == 0) continue;
+                inputTotals.merge(pattern, cost.multiply(units), BigInteger::add);
+                if (unresolvedInputs.merge(pattern, -matches, Integer::sum) != 0) continue;
+                resolveLeafCost(pattern, costs, unresolvedProducers, inputTotals, finalized);
+            }
+        }
+        return costs;
+    }
+
+    private void resolveLeafCost(CompiledPattern<K> pattern, Map<K, BigInteger> costs,
+                                 Map<K, Integer> unresolvedProducers,
+                                 Map<CompiledPattern<K>, BigInteger> inputTotals,
+                                 ArrayDeque<K> finalized) {
+        BigInteger total = inputTotals.get(pattern);
+        for (PatternEntry<K> output : pattern.outputs()) {
+            K key = output.key();
+            BigInteger perUnit = ceilDiv(total, output.amount().asBigInteger());
+            BigInteger existing = costs.get(key);
+            if (existing == null || perUnit.compareTo(existing) < 0) {
+                costs.put(key, perUnit);
+            }
+            if (unresolvedProducers.merge(key, -1, Integer::sum) == 0) {
+                costs.putIfAbsent(key, BigInteger.ONE);
+                finalized.add(key);
+            }
+        }
+    }
+
+    private static BigInteger ceilDiv(BigInteger numerator, BigInteger denominator) {
+        BigInteger[] quotient = numerator.divideAndRemainder(denominator);
+        return quotient[1].signum() == 0 ? quotient[0] : quotient[0].add(BigInteger.ONE);
+    }
+
     private boolean search(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State state,
-                            Map<K, Integer> ranks, Budget budget, boolean simulate) {
+                            Map<K, Integer> ranks, Map<K, BigInteger> leafCosts, Budget budget,
+                            boolean simulate) {
         Task<K> pending = new Task<>(request.target(), request.amount(), 1, null, null, null);
         ArrayDeque<Choice<K>> choices = new ArrayDeque<>();
         while (pending != null) {
@@ -158,7 +252,7 @@ public final class IterativeCraftingPlanner<K> {
             UfoAmount required = state.consume(task.key, task.amount);
             if (required.isZero()) continue;
             List<Candidate<K>> options = state.active.contains(task.key) ? List.of()
-                    : candidates(graph, task.key, required, state, ranks, budget);
+                    : candidates(graph, task.key, required, state, ranks, leafCosts, budget);
             if (options.isEmpty()) {
                 if (simulate) {
                     state.add(state.missing, task.key, required);
@@ -208,7 +302,8 @@ public final class IterativeCraftingPlanner<K> {
     }
 
     private List<Candidate<K>> candidates(ImmutableCraftingGraph<K> graph, K key, UfoAmount required,
-                                          State state, Map<K, Integer> ranks, Budget budget) {
+                                          State state, Map<K, Integer> ranks,
+                                          Map<K, BigInteger> leafCosts, Budget budget) {
         ArrayList<Candidate<K>> options = new ArrayList<>();
         for (CompiledPattern<K> pattern : graph.compiledPatternsFor(key)) {
             budget.operation(0);
@@ -216,6 +311,8 @@ public final class IterativeCraftingPlanner<K> {
             UfoAmount capacity = runs;
             BigInteger deficit = BigInteger.ZERO;
             BigInteger inputCost = BigInteger.ZERO;
+            BigInteger leafCost = BigInteger.ZERO;
+            boolean leafKnown = true;
             int rank = 0;
             boolean cycle = false;
             for (PatternEntry<K> input : pattern.inputs()) {
@@ -229,17 +326,31 @@ public final class IterativeCraftingPlanner<K> {
                 deficit = deficit.add(needed.subtractClamped(available).asBigInteger());
                 inputCost = inputCost.add(needed.asBigInteger());
                 rank = Math.max(rank, ranks.getOrDefault(input.key(), Integer.MAX_VALUE));
+                BigInteger inputLeaf = leafCosts.get(input.key());
+                if (inputLeaf == null) {
+                    leafKnown = false;
+                } else {
+                    // Per execution, so routes with different yields stay comparable.
+                    leafCost = leafCost.add(inputLeaf.multiply(input.amount().asBigInteger()));
+                }
             }
             if (cycle) continue;
-            options.add(new Candidate<>(pattern, runs, deficit, inputCost, rank));
+            BigInteger routeLeafCost = leafKnown ? leafCost : null;
+            options.add(new Candidate<>(pattern, runs, deficit, inputCost, rank, routeLeafCost));
             if (!capacity.isZero() && capacity.compareTo(runs) < 0) {
-                options.add(new Candidate<>(pattern, capacity, BigInteger.ZERO, inputCost, rank));
+                options.add(new Candidate<>(pattern, capacity, BigInteger.ZERO, inputCost, rank,
+                        routeLeafCost));
             }
         }
         for (int i = 0; i < options.size(); i++) budget.operation(0);
         Comparator<Candidate<K>> order = Comparator.<Candidate<K>>comparingInt(option -> option.pattern.pattern().priority())
                 .reversed()
                 .thenComparing(option -> option.deficit.signum() != 0)
+                // Real leaf demand decides between routes that are otherwise equally viable. Without
+                // it an identifier chose, and a correct plan could still ask for several times the
+                // material the case needs.
+                .thenComparing(option -> option.leafCost == null)
+                .thenComparing(option -> option.leafCost, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparingInt(option -> option.rank)
                 .thenComparing(option -> option.deficit)
                 .thenComparing(option -> option.cost)
@@ -258,7 +369,7 @@ public final class IterativeCraftingPlanner<K> {
     }
 
     private record Candidate<K>(CompiledPattern<K> pattern, UfoAmount runs, BigInteger deficit,
-                                 BigInteger cost, int rank) {}
+                                 BigInteger cost, int rank, BigInteger leafCost) {}
     private record Task<K>(K key, UfoAmount amount, int depth, CompiledPattern<K> pattern,
                            UfoAmount runs, Task<K> next) {}
     private static final class Choice<K> {

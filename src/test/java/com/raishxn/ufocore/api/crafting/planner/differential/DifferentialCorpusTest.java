@@ -24,13 +24,19 @@ import org.junit.jupiter.api.Test;
 class DifferentialCorpusTest {
 
     /**
-     * Canonical cases whose known minimum must be reported exactly. The multi-route Fibonacci
-     * frontier is absent because only one witness is retained, so its ratio is a denominator and not
-     * a claim about the true frontier.
+     * Canonical cases whose known minimum must be reported exactly.
+     *
+     * <p>The multi-route Fibonacci frontier used to be absent because only one witness is retained,
+     * so its ratio was a denominator rather than a claim about the true frontier. It belongs here
+     * now: the planner selects routes by a bottom-up leaf-demand computation and the corpus computes
+     * its witness by an independent bottom-up sum of the same objective, so agreement between the
+     * two is a real cross-check and not a restatement. Before that change the planner reported 6.857
+     * times the witness, so this assertion is exactly what fails if the choice regresses.
      */
     private static final List<String> MINIMAL_SHORTAGE_CASES = List.of(
             "single-dag/dispersed",
             "single-dag/fibonacci-depth32",
+            "multi-dag/fibonacci-depth12",
             "multi-dag/sibling-routes",
             "multi-dag/greedy-trap",
             "batching/multi-output",
