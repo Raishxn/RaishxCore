@@ -38,7 +38,8 @@ public final class RaishxCoreSemanticModel {
             CapabilitySemantics.MULTI_ROUTE,
             CapabilitySemantics.REUSABLE_INPUT,
             CapabilitySemantics.FINITE_DURABILITY,
-            CapabilitySemantics.FUZZY_ALTERNATIVES));
+            CapabilitySemantics.FUZZY_ALTERNATIVES,
+            CapabilitySemantics.EMITTER));
 
     private RaishxCoreSemanticModel() {
     }
@@ -111,6 +112,7 @@ public final class RaishxCoreSemanticModel {
         LinkedHashMap<String, UfoAmount> reusable = new LinkedHashMap<>();
         LinkedHashMap<String, Integer> durable = new LinkedHashMap<>();
         LinkedHashMap<String, Set<String>> fuzzy = new LinkedHashMap<>();
+        LinkedHashMap<String, UfoAmount> emitted = new LinkedHashMap<>();
         for (CapabilityInput input : pattern.inputs()) {
             switch (input.kind()) {
                 case EXACT -> inputs.merge(input.key(), input.amount(), UfoAmount::add);
@@ -129,6 +131,11 @@ public final class RaishxCoreSemanticModel {
                         return Set.copyOf(merged);
                     });
                 }
+                case EMITTER -> {
+                    // Declared so the pattern says what it expects, but an external source satisfies
+                    // it, so the plan carries no requirement for it at all.
+                    emitted.merge(input.key(), input.amount(), UfoAmount::add);
+                }
                 default -> throw new UnsupportedSemantics(
                         "pattern " + pattern.id() + " needs " + input.kind() + " input " + input.key());
             }
@@ -142,6 +149,6 @@ public final class RaishxCoreSemanticModel {
             outputs.merge(output.key(), output.amount(), UfoAmount::add);
         }
         return new CraftingPattern<>(pattern.id(), pattern.priority(), inputs, reusable, durable, fuzzy,
-                outputs, pattern.craftableOutputs());
+                emitted, outputs, pattern.craftableOutputs());
     }
 }

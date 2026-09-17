@@ -444,7 +444,7 @@ public final class CapabilityCorpus {
         Map<String, UfoAmount> starved = amounts(Map.of("ore", 50L));
         threeModes(out, "emitter/authorized-stream", CapabilityFamily.EMITTER, 100, "product",
                 UfoAmount.of(100), minimum, starved, List.of(amounts(Map.of("ore", 50L))), true,
-                semantics, CapabilityExpectation.LIMITATION,
+                semantics, CapabilityExpectation.REQUIRED,
                 stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 

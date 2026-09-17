@@ -82,7 +82,7 @@ class DifferentialCorpusTest {
             }
         }
         assertTrue(unresolved.isEmpty(), () -> "unresolved required capabilities: " + unresolved);
-        assertEquals(36, report.supportedRequired());
+        assertEquals(39, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
@@ -103,7 +103,7 @@ class DifferentialCorpusTest {
                             + entry.classification());
         }
         assertEquals(0, report.supportedLimitations());
-        assertEquals(15, report.of(CapabilityExpectation.LIMITATION).size());
+        assertEquals(12, report.of(CapabilityExpectation.LIMITATION).size());
     }
 
     @Test void everyResultIsDeterministic() {
@@ -132,11 +132,11 @@ class DifferentialCorpusTest {
         assertEquals(Set.of(CapabilityFamily.SINGLE_DAG, CapabilityFamily.MULTI_DAG,
                 CapabilityFamily.BATCHING, CapabilityFamily.BYPRODUCT, CapabilityFamily.DEEP_CHAIN,
                 CapabilityFamily.REUSABLE_CATALYST, CapabilityFamily.FINITE_DURABILITY,
-                CapabilityFamily.FUZZY_VARIANT),
+                CapabilityFamily.FUZZY_VARIANT, CapabilityFamily.EMITTER),
                 required);
         assertEquals(Set.of(CapabilityFamily.CONVERSION_CYCLE, CapabilityFamily.POSITIVE_FEEDBACK,
-                CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK,
-                CapabilityFamily.EMITTER), limitations);
+                CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
+                limitations);
     }
 
     @Test void reportContainsEveryFieldTheStandardRequires() {

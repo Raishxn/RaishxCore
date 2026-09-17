@@ -14,6 +14,7 @@ public final class CraftingPattern<K> {
     private final Map<K, UfoAmount> inputs;
     private final Map<K, UfoAmount> reusableInputs;
     private final Map<K, Set<K>> fuzzyVariants;
+    private final Map<K, UfoAmount> emittedInputs;
     private final Map<K, Integer> durableUses;
     private final Map<K, UfoAmount> outputs;
     private final Set<K> craftableOutputs;
@@ -57,11 +58,31 @@ public final class CraftingPattern<K> {
                             Map<K, UfoAmount> reusableInputs, Map<K, Integer> durableUses,
                             Map<K, Set<K>> fuzzyVariants, Map<K, UfoAmount> outputs,
                             Set<K> craftableOutputs) {
+        this(id, priority, inputs, reusableInputs, durableUses, fuzzyVariants, Map.of(), outputs,
+                craftableOutputs);
+    }
+
+    /**
+     * @param emittedInputs inputs an authorized external source satisfies: they are declared so the
+     *                      pattern says what it expects, but they impose no constraint on the plan and
+     *                      are neither drawn from inventory nor reported as missing
+     */
+    public CraftingPattern(String id, int priority, Map<K, UfoAmount> inputs,
+                            Map<K, UfoAmount> reusableInputs, Map<K, Integer> durableUses,
+                            Map<K, Set<K>> fuzzyVariants, Map<K, UfoAmount> emittedInputs,
+                            Map<K, UfoAmount> outputs, Set<K> craftableOutputs) {
         this.id = Objects.requireNonNull(id, "id");
         if (id.isBlank()) throw new IllegalArgumentException("pattern id must not be blank");
         this.priority = priority;
         this.inputs = copyAmounts(inputs, "input");
         this.reusableInputs = copyAmounts(reusableInputs, "reusable input");
+        this.emittedInputs = copyAmounts(emittedInputs, "emitted input");
+        for (K key : this.emittedInputs.keySet()) {
+            if (this.inputs.containsKey(key) || this.reusableInputs.containsKey(key)) {
+                throw new IllegalArgumentException(
+                        "an input cannot be both supplied externally and drawn from the plan: " + key);
+            }
+        }
         for (K key : this.reusableInputs.keySet()) {
             if (this.inputs.containsKey(key)) {
                 throw new IllegalArgumentException("input cannot be both consumed and reusable: " + key);
@@ -114,6 +135,8 @@ public final class CraftingPattern<K> {
     public Map<K, Integer> durableUses() { return durableUses; }
     /** Concrete variants a reusable input accepts, including the logical key itself. */
     public Map<K, Set<K>> fuzzyVariants() { return fuzzyVariants; }
+    /** Inputs an authorized external source supplies, so the plan never has to provide them. */
+    public Map<K, UfoAmount> emittedInputs() { return emittedInputs; }
     public Map<K, UfoAmount> outputs() { return outputs; }
     /** Outputs selectable as a crafting route; other outputs remain usable byproducts. */
     public Set<K> craftableOutputs() { return craftableOutputs; }
@@ -133,13 +156,14 @@ public final class CraftingPattern<K> {
     @Override public boolean equals(Object object) {
         return object instanceof CraftingPattern<?> other && id.equals(other.id) && priority == other.priority
                 && inputs.equals(other.inputs) && reusableInputs.equals(other.reusableInputs)
-                && fuzzyVariants.equals(other.fuzzyVariants) && durableUses.equals(other.durableUses)
-                && outputs.equals(other.outputs) && craftableOutputs.equals(other.craftableOutputs);
+                && fuzzyVariants.equals(other.fuzzyVariants) && emittedInputs.equals(other.emittedInputs)
+                && durableUses.equals(other.durableUses) && outputs.equals(other.outputs)
+                && craftableOutputs.equals(other.craftableOutputs);
     }
 
     @Override public int hashCode() {
-        return Objects.hash(id, priority, inputs, reusableInputs, fuzzyVariants, durableUses, outputs,
-                craftableOutputs);
+        return Objects.hash(id, priority, inputs, reusableInputs, fuzzyVariants, emittedInputs, durableUses,
+                outputs, craftableOutputs);
     }
     @Override public String toString() { return id; }
 }

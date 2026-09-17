@@ -215,6 +215,39 @@ class IterativeCraftingPlannerTest {
                 () -> "the slot is reported by its logical key, not by one of its variants");
     }
 
+    @Test void anEmittedInputImposesNoRequirement() {
+        var recipe = emitted("product", Map.of("ore", amount(1)), Map.of("flux", amount(10)),
+                Map.of("product", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(100), Map.of("ore", amount(100))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status(),
+                () -> "missing=" + result.plan().missing());
+        // An external source supplies the flux, so it is neither drawn nor reported as missing.
+        assertFalse(result.plan().extractedFromInventory().containsKey("flux"));
+        assertFalse(result.plan().missing().containsKey("flux"));
+    }
+
+    @Test void anEmittedInputNeverAppearsInAShortage() {
+        var recipe = emitted("product", Map.of("ore", amount(1)), Map.of("flux", amount(10)),
+                Map.of("product", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(100), Map.of("ore", amount(50))));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, result.status());
+        assertEquals(amount(50), result.plan().missing().get("ore"));
+        assertFalse(result.plan().missing().containsKey("flux"),
+                "the authorized source covers the flux, so it is never short");
+    }
+
+    private static CraftingPattern<String> emitted(String id, Map<String, UfoAmount> inputs,
+                                                    Map<String, UfoAmount> emittedInputs,
+                                                    Map<String, UfoAmount> outputs) {
+        return new CraftingPattern<>(id, 0, inputs, Map.of(), Map.of(), Map.of(), emittedInputs, outputs,
+                outputs.keySet());
+    }
     private static CraftingPattern<String> fuzzy(String id, Map<String, UfoAmount> reusableInputs,
                                                   Map<String, Set<String>> variants,
                                                   Map<String, UfoAmount> outputs) {

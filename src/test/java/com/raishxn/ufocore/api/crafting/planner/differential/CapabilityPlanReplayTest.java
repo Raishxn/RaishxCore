@@ -132,12 +132,11 @@ class CapabilityPlanReplayTest {
                 List.of(CapabilityOutput.primary("out", 1),
                         CapabilityOutput.probabilistic("extra", 1)))), Map.of());
 
-        // A catalyst and a fuzzy slot are both replayable: the oracle checks the accepted keys are
-        // present and hands them back rather than drawing them, so a plan using either can be
-        // verified like any other.
+        // A catalyst, a fuzzy slot and an emitted input are all replayable: the oracle checks the
+        // accepted keys are present and hands them back, or owes nothing for a source it does not own.
         assertTrue(CapabilityPlanReplay.isReplayable(catalyst));
         assertTrue(CapabilityPlanReplay.isReplayable(fuzzy));
-        assertFalse(CapabilityPlanReplay.isReplayable(emitter));
+        assertTrue(CapabilityPlanReplay.isReplayable(emitter));
         assertFalse(CapabilityPlanReplay.isReplayable(probabilistic));
     }
 

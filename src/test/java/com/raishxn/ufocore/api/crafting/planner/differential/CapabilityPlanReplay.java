@@ -113,7 +113,7 @@ public final class CapabilityPlanReplay {
             for (CapabilityInput input : pattern.inputs()) {
                 // A catalyst is never consumed, so it is not demand: the seed stays in remaining, and
                 // that is what the balance below expects to find there.
-                if (presenceOnly(input)) continue;
+                if (presenceOnly(input) || externallySatisfied(input)) continue;
                 addInto(demand, input.key(), draw(input, entry.getValue()));
             }
             for (CapabilityOutput output : pattern.outputs()) {
@@ -184,6 +184,7 @@ public final class CapabilityPlanReplay {
             }
             executedRuns = executedRuns.add(step.runs());
             for (CapabilityInput input : pattern.inputs()) {
+                if (externallySatisfied(input)) continue;
                 if (presenceOnly(input)) {
                     // Presence once, drawn never: one seed serves every execution and must still be
                     // in its pool after the step. A fuzzy slot is satisfied by any accepted variant,
@@ -321,7 +322,8 @@ public final class CapabilityPlanReplay {
                         input.kind() == CapabilityInput.Kind.EXACT
                                 || input.kind() == CapabilityInput.Kind.REUSABLE
                                 || input.kind() == CapabilityInput.Kind.FINITE_USE
-                                || input.kind() == CapabilityInput.Kind.FUZZY)
+                                || input.kind() == CapabilityInput.Kind.FUZZY
+                                || input.kind() == CapabilityInput.Kind.EMITTER)
                 && pattern.outputs().stream().noneMatch(output ->
                         output.kind() == CapabilityOutput.Kind.PROBABILISTIC);
     }
@@ -335,6 +337,11 @@ public final class CapabilityPlanReplay {
     private static boolean presenceOnly(CapabilityInput input) {
         return input.kind() == CapabilityInput.Kind.REUSABLE
                 || input.kind() == CapabilityInput.Kind.FUZZY;
+    }
+
+    /** True when an authorized external source satisfies the slot, so the plan owes nothing for it. */
+    private static boolean externallySatisfied(CapabilityInput input) {
+        return input.kind() == CapabilityInput.Kind.EMITTER;
     }
 
     /**
