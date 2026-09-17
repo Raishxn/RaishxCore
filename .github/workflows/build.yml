@@ -14,22 +14,32 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup JDK 21
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           java-version: '21'
           distribution: temurin
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Verify sources and artifact
         run: ./gradlew test build --stacktrace
 
       - name: Run integration GameTests
         run: ./gradlew runGameTestServer --stacktrace
+
+      # runGameTestServer exits 0 when the mod fails to load, so a loading crash would otherwise
+      # sail through this gate. Require the completion banner the GameTest server prints.
+      - name: Assert the GameTests actually ran
+        run: |
+          if ! grep -q "GAME TESTS COMPLETE" run/logs/latest.log; then
+            echo "::error::runGameTestServer finished without completing any GameTest"
+            tail -n 120 run/logs/latest.log
+            exit 1
+          fi
 
       - name: Run planner benchmark
         run: ./gradlew plannerBenchmark --stacktrace
@@ -41,7 +51,7 @@ jobs:
 
       - name: Upload verification artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: raishxcore-verification-${{ github.run_id }}
           if-no-files-found: warn
@@ -50,3 +60,67 @@ jobs:
             build/reports/tests
             build/reports/planner
             run/logs/latest.log
+
+  # AE2 compatibility. The declared range is [19.2.17,20), so the only released version inside it is
+  # its own floor, and NeoForge enforces that range at load time. This job therefore re-checks the
+  # declared floor and probes the newest release inside the range, which is how a future 19.2.x that
+  # breaks the required mixins gets caught before users meet it.
+  ae2-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [declared, newest-in-range]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Resolve the AE2 version to test
+        id: ae2
+        run: |
+          DECLARED=$(grep '^ae2_version=' gradle.properties | cut -d'=' -f2)
+          if [ "${{ matrix.target }}" = "declared" ]; then
+            echo "value=$DECLARED" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          RANGE=$(grep '^ae2_version_range=' gradle.properties | cut -d'=' -f2)
+          VALUE=$(python3 - "$RANGE" "$DECLARED" <<'PY'
+          import re, sys, urllib.request
+
+          floor, ceiling = re.match(r"\[([^,]+),([^)]+)\)", sys.argv[1]).groups()
+          declared = sys.argv[2]
+          url = ("https://repo1.maven.org/maven2/org/appliedenergistics/"
+                 "appliedenergistics2/maven-metadata.xml")
+          body = urllib.request.urlopen(url, timeout=60).read().decode("utf-8")
+          released = re.findall(r"<version>([^<]+)</version>", body)
+
+          def key(v):
+              return [int(part) for part in re.findall(r"\d+", v)]
+
+          low, high = key(floor), key(ceiling)
+          inside = [v for v in released if low <= key(v) < high]
+          print(max(inside, key=key) if inside else declared)
+          PY
+          )
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
+
+      - name: Verify against AE2 ${{ steps.ae2.outputs.value }}
+        run: ./gradlew clean test build runGameTestServer -Pae2_version=${{ steps.ae2.outputs.value }} --stacktrace
+
+      - name: Assert the GameTests actually ran
+        run: |
+          if ! grep -q "GAME TESTS COMPLETE" run/logs/latest.log; then
+            echo "::error::AE2 ${{ steps.ae2.outputs.value }} did not complete any GameTest"
+            tail -n 120 run/logs/latest.log
+            exit 1
+          fi

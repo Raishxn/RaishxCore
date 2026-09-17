@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Actions are pinned by commit SHA, so nothing updates them unless something does it
+  # deliberately. Keeping this grouped means one reviewable PR per week.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # The AE2 range is enforced at load time and the mod ships required mixins, so a dependency
+  # bump is never routine: the AE2 compatibility job in build.yml is what decides whether it is
+  # safe. Nothing is merged automatically.
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      gradle-dependencies:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

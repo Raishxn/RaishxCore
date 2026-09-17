@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Read mod version
+        id: version
+        run: |
+          VERSION=$(grep '^mod_version=' gradle.properties | cut -d'=' -f2)
+          if [ -z "$VERSION" ]; then
+            echo "mod_version is missing from gradle.properties"
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # A release must publish the artifact its tag names, never a stale alpha.
+      - name: Verify the tag matches the declared version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "$RELEASE_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match mod_version=$RELEASE_VERSION"
+            exit 1
+          fi
+
+      - name: Verify sources, artifacts and GameTests
+        run: ./gradlew clean test build runGameTestServer --stacktrace
+
+      - name: Verify the build left the worktree clean
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Generate the publication POM
+        run: ./gradlew generatePomFileForMavenJavaPublication --stacktrace
+
+      - name: Assemble release directory
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p build/release
+          cp build/libs/*.jar build/release/
+          cp build/publications/mavenJava/pom-default.xml "build/release/raishxcore-${RELEASE_VERSION}.pom"
+          cd build/release
+          sha256sum ./* > SHA256SUMS
+          ls -l
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: raishxcore-${{ steps.version.outputs.value }}
+          path: |
+            build/release/*.jar
+            build/release/*.pom
+            build/release/SHA256SUMS
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          name: RaishxCore ${{ steps.version.outputs.value }}
+          prerelease: ${{ contains(steps.version.outputs.value, '-') }}
+          make_latest: ${{ contains(steps.version.outputs.value, '-') && 'false' || 'true' }}
+          generate_release_notes: true
+          files: |
+            build/release/*.jar
+            build/release/*.pom
+            build/release/SHA256SUMS
