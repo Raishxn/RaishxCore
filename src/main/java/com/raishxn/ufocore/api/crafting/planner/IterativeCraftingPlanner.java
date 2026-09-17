@@ -194,9 +194,17 @@ public final class IterativeCraftingPlanner<K> {
         }
 
         ArrayDeque<K> finalized = new ArrayDeque<>();
+        // A leaf costs one unit of itself, or what the request says that unit is worth. The rest of
+        // the pass multiplies amounts through, so a root ends up holding weighted leaf value, and the
+        // route comparison is then made in the same currency as the shortage it is trying to avoid.
+        // Leaves were counted in bare units before, which meant a route needing ten cheap units beat
+        // one needing a single valuable unit and the declared weights were never consulted at all.
+        // One is the default and stays the same object, so an unweighted request is untouched.
+        Map<K, Long> weights = budget.request.missingWeights();
         for (K key : keys) {
             if (unresolvedProducers.getOrDefault(key, 0) == 0) {
-                costs.put(key, BigInteger.ONE);
+                costs.put(key, weights.isEmpty() ? BigInteger.ONE
+                        : BigInteger.valueOf(weights.getOrDefault(key, 1L)));
                 finalized.add(key);
             }
         }

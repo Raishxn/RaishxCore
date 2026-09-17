@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-21 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 63 cases.
+22 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 66 cases.
 
-Representable today and therefore `REQUIRED`, 63 cases:
+Representable today and therefore `REQUIRED`, 66 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -87,6 +87,7 @@ Representable today and therefore `REQUIRED`, 63 cases:
 | `multi-dag/fibonacci-depth12` | two routes per level, the frontier is minimal |
 | `multi-dag/greedy-trap` | route ordering trap at the reference scale of 32 conflicts |
 | `multi-dag/weighted-shortage` | two routes identical in units, told apart only by weight |
+| `multi-dag/weighted-leaf-cost` | routes differing in how much material they need, weighed |
 | `batching/multi-output` | whole-batch rounding with a deterministic coproduct |
 | `byproduct/shared-coproduct` | one coproduct produced by two routes |
 | `byproduct/feeds-later-stage` | coproduct consumed by a later stage |
@@ -145,10 +146,21 @@ unit missing, so the unit count cannot tell them apart, and the valuable route i
 sorts first. The report used to name the material worth a hundred times more, at an overhead of
 `100.0` against a minimum of one; it now names the cheap one, at `1.000`.
 
+`multi-dag/weighted-leaf-cost` is the sharper of the two. The routes differ in how much material
+they need as well as in what it is worth, and the comparison that runs *before* the shortage
+comparison — the bottom-up leaf demand — was still counted in bare units. Ten cheap units therefore
+looked worse than one valuable unit, the route comparison never handed the decision to the weighted
+one, and the report named the valuable material at an overhead of `10.0`. A leaf now costs what the
+request says a unit of it is worth, so the whole pass is made in the same currency as the shortage it
+is trying to avoid.
+
 The engine takes whole-number weights rather than fractions, so the comparison stays exact and the
 plan stays reproducible, and a weight of one is not stored at all. That last part is what keeps the
 promise that a request declaring no weights behaves exactly as it did before weights existed: on the
-benchmark's own conflict case the allocation is byte-identical either way.
+benchmark's own conflict case the allocation is byte-identical either way, `20248` before and after.
+
+Weights are not yet supplied by the bridge. Nothing in AE2 says what a material is worth, so wiring
+them to provider priorities is still open; the API and the proof are what landed.
 
 ## Scale
 
@@ -177,6 +189,7 @@ overhead above one on a required case. They are printed so they cannot be overlo
 
 | Cases | Was | Cause and fix |
 | --- | --- | --- |
+| `multi-dag/weighted-leaf-cost/missing` | `missingOverhead` 10.0 | The route comparison runs before the shortage comparison, and it counted leaf demand in bare units, so ten cheap units lost to one valuable unit and the declared weight was never consulted. Leaf keys are now priced at their declared weight, which puts the whole pass in the same currency as the shortage. |
 | `catalyst/secondary-through-catalyst/missing` | `missingOverhead` 1.200 | A catalyst was charged once per *expansion* of its recipe rather than once per plan. Chasing a secondary output separately from the primary expands the same recipe twice, so the presence check ran twice and demanded two catalysts when one is handed back and covers both. `State` now records the working stock already demanded and charges only the decay again. |
 | `byproduct/shared-coproduct/{minimum,unbounded}`, `byproduct/feeds-later-stage/{minimum,unbounded}` | `FALSE_NEGATIVE` | A demanded coproduct was resolved before the sibling route that produces it, so a composite whose coproduct key sorts before its routable keys reported an impossible shortage. `ImmutableCraftingGraph` now orders each pattern's inputs so that an input with a selectable route is resolved before an input that can only be collected as a deterministic coproduct. |
 
@@ -216,7 +229,7 @@ why the assertions are on deterministic invariants and the benchmark gates the n
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 21 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 22 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.

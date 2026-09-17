@@ -71,6 +71,7 @@ public final class CapabilityCorpus {
         addSurplusSecondaryDemand(scenarios);
         addSecondaryThroughCatalyst(scenarios);
         addWeightedShortage(scenarios);
+        addWeightedLeafCost(scenarios);
         addChanceRoute(scenarios);
         addSelfGrowth(scenarios);
         addRawFeedbackLoop(scenarios);
@@ -609,6 +610,29 @@ public final class CapabilityCorpus {
                 List.of(amounts(Map.of("cheap", 1L)), amounts(Map.of("gold", 1L))),
                 Map.of("cheap", 1.0D, "gold", 100.0D), DAG_MULTI_ROUTE,
                 CapabilityExpectation.REQUIRED, CapabilityCorpus::weightedShortageRoutes);
+    }
+
+    /**
+     * The same two-route tie, with the routes differing in how much of their material they need. The
+     * order that compares raw leaf demand runs before the one that compares weighted shortage, so the
+     * cheaper route wins on a count of units and the weight never gets consulted.
+     */
+    private static void addWeightedLeafCost(List<CapabilityScenario> out) {
+        Map<String, UfoAmount> minimum = amounts(Map.of("gold", 1L, "cheap", 10L));
+        weightedThreeModes(out, "multi-dag/weighted-leaf-cost", CapabilityFamily.MULTI_DAG, 2, "widget",
+                UfoAmount.ONE, minimum, Map.of(),
+                List.of(amounts(Map.of("gold", 1L)), amounts(Map.of("cheap", 10L))),
+                Map.of("gold", 100.0D, "cheap", 1.0D), DAG_MULTI_ROUTE,
+                CapabilityExpectation.REQUIRED, CapabilityCorpus::weightedLeafCostRoutes);
+    }
+
+    private static CapabilityGraph weightedLeafCostRoutes(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("widget-a-gold", List.of(input("gold", 1)),
+                        List.of(primary("widget", 1))),
+                CapabilityPattern.of("widget-b-cheap", List.of(input("cheap", 10)),
+                        List.of(primary("widget", 1))));
+        return graph(patterns, stock);
     }
 
     private static CapabilityGraph weightedShortageRoutes(Map<String, UfoAmount> stock) {

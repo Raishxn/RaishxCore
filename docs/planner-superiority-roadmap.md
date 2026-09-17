@@ -398,6 +398,12 @@ caminho de antes — a alocação no caso de conflito do benchmark é byte a byt
 `multi-dag/weighted-shortage` fixa isso: duas rotas idênticas em unidades, separadas só pelo peso,
 e o relatório passou de nomear o material 100 vezes mais caro para nomear o barato.
 
+O caso mais afiado é `multi-dag/weighted-leaf-cost`, porque a comparação de rotas roda **antes** da
+comparação de faltante — a demanda de folha, calculada de baixo para cima, ainda era contada em
+unidades cruas. Dez unidades baratas perdiam para uma cara, a decisão nunca chegava ao comparador
+ponderado, e o relatório nomeava o material caro com overhead `10.0`. Agora a folha custa o peso que
+o request declarou, e toda a passada é feita na mesma moeda do faltante que ela tenta evitar.
+
 **Estado:** não iniciado como solver. O que existe é o adaptador de ciclos da Fase 2, que resolve a
 aritmética de um componente mas não otimiza entre rotas, e o backtracking local do planner
 iterativo. Nenhum dos dois reivindica o ótimo global, e o doc de classe do `IterativeCraftingPlanner`

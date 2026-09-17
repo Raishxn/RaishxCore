@@ -382,6 +382,30 @@ class IterativeCraftingPlannerTest {
         assertFalse(weighted.plan().missing().containsKey("gold"));
     }
 
+    /**
+     * The route comparison runs before the shortage comparison, so it has to be made in the same
+     * currency. Counting leaves in bare units made ten cheap ones look worse than a single valuable
+     * one, and the declared weight of that valuable unit was never consulted.
+     */
+    @Test void weighsTheLeafDemandWhenChoosingBetweenRoutes() {
+        var gold = pattern("a-gold", Map.of("gold", amount(1)), Map.of("widget", amount(1)));
+        var cheap = pattern("b-cheap", Map.of("cheap", amount(10)), Map.of("widget", amount(1)));
+        var base = new PlanningRequest<String>("widget", amount(1), Map.of());
+
+        var unweighted = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(gold, cheap)), base);
+        assertTrue(unweighted.plan().missing().containsKey("gold"),
+                () -> "in bare units one valuable unit looks cheaper: " + unweighted.plan().missing());
+
+        var weighted = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(gold, cheap)),
+                new PlanningRequest<>("widget", amount(1), Map.of(), base.limits(),
+                        PlanningCancellation.NEVER, Map.of("gold", 100L)));
+
+        assertEquals(amount(10), weighted.plan().missing().get("cheap"),
+                () -> "ten cheap units are worth less than one valuable one: "
+                        + weighted.plan().missing());
+        assertFalse(weighted.plan().missing().containsKey("gold"));
+    }
+
     private static CraftingPattern<String> emitted(String id, Map<String, UfoAmount> inputs,
                                                     Map<String, UfoAmount> emittedInputs,
                                                     Map<String, UfoAmount> outputs) {
