@@ -3,9 +3,11 @@ package com.raishxn.ufocore.api.crafting.planner.differential;
 import com.raishxn.ufocore.api.crafting.planner.differential.DifferentialHarness.Entry;
 import com.raishxn.ufocore.api.crafting.planner.differential.DifferentialHarness.Report;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -51,6 +53,7 @@ public final class CapabilityMatrix {
         keys.addAll(byB.keySet());
 
         StringBuilder text = new StringBuilder();
+        appendProvenance(text);
         text.append("== differential capability matrix ==\n");
         text.append("A=").append(core.planner().name())
                 .append(" B=").append(reference.planner().name())
@@ -187,6 +190,43 @@ public final class CapabilityMatrix {
         text.append("reference errored            : ").append(error).append('\n');
         text.append("\nA claim is not a verdict: for the families above, confirm the reference with its\n")
                 .append("own replay or an independent oracle before treating any of these as solved.\n");
+    }
+
+    /**
+     * Provenance header. A comparison number only reproduces if it names what produced it, so the
+     * report leads with the commits and the environment instead of leaving them to be guessed - the
+     * roadmap asks for a reproducible report, and a table without this is an anecdote.
+     */
+    private static void appendProvenance(StringBuilder text) {
+        text.append("== provenance ==\n");
+        text.append("raishxcore commit    : ").append(gitRevision(Path.of("."))).append('\n');
+        text.append("thunderbolt checkout : ").append(Path.of("..", "Thunderbolt-Core").toAbsolutePath().normalize())
+                .append(" @ ").append(gitRevision(Path.of("..", "Thunderbolt-Core"))).append('\n');
+        text.append("java                 : ").append(System.getProperty("java.version")).append(' ')
+                .append(System.getProperty("java.vm.name")).append('\n');
+        text.append("os                   : ").append(System.getProperty("os.name")).append(' ')
+                .append(System.getProperty("os.arch")).append(" cpus=")
+                .append(Runtime.getRuntime().availableProcessors()).append('\n');
+        text.append("generated            : ").append(Instant.now()).append('\n');
+        text.append("note                 : timing is not measured here; the engines run once for the\n")
+                .append("                       capability verdict, while the benchmark gates performance\n\n");
+    }
+
+    /** Reads a checkout's revision, or says so plainly when the directory is not a git checkout. */
+    static String gitRevision(Path directory) {
+        try {
+            Process process = new ProcessBuilder("git", "rev-parse", "HEAD")
+                    .directory(directory.toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            return process.waitFor() == 0 && !output.isEmpty() ? output : "unknown";
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return "unknown";
+        } catch (Exception unavailable) {
+            return "unknown";
+        }
     }
 
     private static Map<String, CapabilityClaim> claims(Map<String, Entry> byKey) {
