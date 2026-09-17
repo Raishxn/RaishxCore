@@ -142,6 +142,30 @@ tasks.register('plannerDifferential', JavaExec) {
     jvmArgs '-Xms256m', '-Xmx1g'
 }
 
+// Capability matrix: runs the same frozen corpus through RaishxCore and the unmodified local
+// Thunderbolt V2 reference, so "who is better" is measured per case instead of inferred.
+def compileThunderboltCorpus = tasks.register('compileThunderboltCorpus', JavaCompile) {
+    group = 'verification'
+    source fileTree('src/corpusReference/java')
+    source new File(thunderboltSources, 'com/moakiee/thunderbolt/core/crafting/planner/CraftPlannerV2.java')
+    classpath = sourceSets.test.output + sourceSets.main.output
+    options.sourcepath = files(thunderboltSources)
+    options.compilerArgs += ['-implicit:class']
+    destinationDirectory = layout.buildDirectory.dir('classes/thunderboltCorpus')
+    javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(21) }
+    dependsOn tasks.named('testClasses')
+}
+
+tasks.register('plannerCapabilityMatrix', JavaExec) {
+    group = 'verification'
+    description = 'Runs the differential corpus through RaishxCore and the local Thunderbolt V2 reference.'
+    dependsOn compileThunderboltCorpus
+    classpath = sourceSets.test.runtimeClasspath + files(compileThunderboltCorpus.flatMap { it.destinationDirectory })
+    mainClass = 'com.raishxn.ufocore.api.crafting.planner.differential.CapabilityMatrix'
+    args layout.buildDirectory.file('reports/planner/capability-matrix.txt').get().asFile.absolutePath
+    jvmArgs '-Xms256m', '-Xmx1g'
+}
+
 // Capture slice harness: drives the production capture machine in bounded slices, gates the
 // deterministic slicing invariants and reports the measured slice p50/p95/p99 per grid and per tick.
 tasks.register('plannerCaptureSlices', JavaExec) {
