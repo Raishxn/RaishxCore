@@ -28,6 +28,8 @@ import java.util.Set;
  */
 public final class ImmutableCraftingGraph<K> {
     private final long revision;
+    private final int keyCount;
+    private final int edgeCount;
     private final Comparator<? super K> keyComparator;
     private final List<CraftingPattern<K>> patterns;
     private final NavigableMap<K, List<CompiledPattern<K>>> byOutput;
@@ -92,6 +94,14 @@ public final class ImmutableCraftingGraph<K> {
         this.byInput = Collections.unmodifiableMap(consumers);
         this.compiled = List.copyOf(compiledPatterns);
         this.simpleDemandOrder = compileSimpleDemandOrder(uniqueKeys.keySet());
+        // Counted here rather than on demand: the compilation already visits every entry, and an
+        // operator asking how large the graph is must not make every plan pay to be able to answer.
+        this.keyCount = uniqueKeys.size();
+        int edges = 0;
+        for (CompiledPattern<K> pattern : compiledPatterns) {
+            edges += pattern.inputs().size() + pattern.outputs().size();
+        }
+        this.edgeCount = edges;
     }
 
     public static <K> ImmutableCraftingGraph<K> create(long revision,
@@ -101,6 +111,15 @@ public final class ImmutableCraftingGraph<K> {
     }
 
     public long revision() { return revision; }
+
+    /** Distinct resource keys in the graph. */
+    public int keyCount() { return keyCount; }
+
+    /** Compiled patterns, which is the number of recipes the planner may fire. */
+    public int patternCount() { return compiled.size(); }
+
+    /** Input entries plus output entries across every compiled pattern. */
+    public int edgeCount() { return edgeCount; }
     public Comparator<? super K> keyComparator() { return keyComparator; }
     public List<CraftingPattern<K>> patterns() { return patterns; }
     public List<CraftingPattern<K>> patternsFor(K output) {

@@ -768,8 +768,12 @@ deliberadamente para o payload continuar sendo números. A primeira versão acum
 saque, e o gate de alocação cobrou sete e meio por cento num caso cujo plano é completo; a segunda
 derivava varrendo o plano uma vez por chave faltante, e o gate cobrou vinte e sete por cento numa
 cadeia com uma folha faltante. A terceira deriva numa passada só e só para as chaves que faltam, e
-ficou em 1,11x e 1,10x. Também faltam a rota escolhida e
-por quê, cortes de ciclo, e contagem de nós, arestas e SCCs do componente. O `gap do solver` fica sem sentido enquanto a Fase 4 não
+ficou em 1,11x e 1,10x. A forma do grafo também sai: `graph.keys`, `graph.patterns` e `graph.edges`, contados uma vez na
+compilação do snapshot e não sob demanda, porque uma pergunta de operador não pode fazer todo plano
+pagar para ser respondível. Os SCCs ficam de fora: o adaptador de ciclos reconhece uma volta simples
+de rota única e não constrói componentes, então não há o que contar.
+
+Também faltam a rota escolhida e por quê, e os cortes de ciclo. O `gap do solver` fica sem sentido enquanto a Fase 4 não
 existir, e está registrado como tal lá.
 
 ## 14. Compatibilidade, API e rollout

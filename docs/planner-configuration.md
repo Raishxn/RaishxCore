@@ -50,6 +50,11 @@ misses, status, the last plan's operation count and elapsed time, the shortage s
 described below, queue and worker counts, backpressure and circuit-breaker state,
 capture counters and byte ceilings, and the capture histograms.
 
+`graph.keys`, `graph.patterns` and `graph.edges` are the shape of what the last plan
+reasoned over. They are counted once when the snapshot is compiled rather than on
+demand, so an operator asking how large the graph is does not make every plan pay
+for the ability to answer.
+
 Inside `lastPlan`, `missingConsumable`, `missingSeed` and `missingCarrier` are how
 much of the shortage is material that is gone once used, material that is handed
 back so one unit covers the batch, and carriers that wear out. The three `...Kinds`

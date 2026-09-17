@@ -39,7 +39,8 @@ class PlannerDiagnosticsReportTest {
     }
 
     private static Ae2PlannerBridge.Diagnostics diagnostics(PlanningResult.Diagnostics plan, String status) {
-        return new Ae2PlannerBridge.Diagnostics(7L, 3L, 4L, status, plan, 1, 5L, 2L, 0L, 2, 1, 0L, 0L,
+        return new Ae2PlannerBridge.Diagnostics(7L, 3L, 4L, status, plan, 1204, 3800, 11000,
+                1, 5L, 2L, 0L, 2, 1, 0L, 0L,
                 "CLOSED", 0, 0, 0L, 9L, 0L, 12, 1, 2048L, 0L, 1_500_000L,
                 new CaptureSliceMetrics.Snapshot(3L, 10L, 20L, 30L, 40L, 60L, 5L, 2L, 11L, 21L, 31L, 41L, 50L,
                         5L, 6L, 7L, 0L));
@@ -59,6 +60,7 @@ class PlannerDiagnosticsReportTest {
         assertTrue(json.contains("\"submitted\":5"), json);
         assertTrue(json.contains("\"sliceP95Nanos\":20"), json);
         assertTrue(json.contains("\"tickBudgetRemainingNanos\":1500000"), json);
+        assertTrue(json.contains("\"graph\":{\"keys\":1204,\"patterns\":3800,\"edges\":11000}"), json);
     }
 
     @Test

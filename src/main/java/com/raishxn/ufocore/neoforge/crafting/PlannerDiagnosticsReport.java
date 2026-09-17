@@ -26,6 +26,12 @@ public final class PlannerDiagnosticsReport {
                 .append(",\"revision\":").append(diagnostics.revision())
                 .append(",\"status\":\"").append(escape(diagnostics.status())).append('"');
 
+        // What the last plan reasoned over. Together with the phase timings this answers "why is it
+        // slow", and it costs nothing: the graph counted itself when it was compiled.
+        json.append(",\"graph\":{\"keys\":").append(diagnostics.graphKeys())
+                .append(",\"patterns\":").append(diagnostics.graphPatterns())
+                .append(",\"edges\":").append(diagnostics.graphEdges()).append('}');
+
         json.append(",\"requests\":{\"inFlight\":").append(diagnostics.inFlightRequests())
                 .append(",\"submitted\":").append(diagnostics.submittedRequests())
                 .append(",\"deduplicated\":").append(diagnostics.deduplicatedRequests())

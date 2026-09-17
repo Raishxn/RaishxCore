@@ -75,6 +75,9 @@ public final class Ae2PlannerBridge {
     private int capturedPatterns;
     private int rotation;
     private volatile PlanningResult.Diagnostics lastDiagnostics;
+    private volatile int lastGraphKeys;
+    private volatile int lastGraphPatterns;
+    private volatile int lastGraphEdges;
     private volatile String lastStatus = "idle";
 
     public Ae2PlannerBridge() {
@@ -427,6 +430,12 @@ public final class Ae2PlannerBridge {
         if (statusGeneration == generation) {
             lastDiagnostics = result.diagnostics();
             lastStatus = result.status().name();
+            // Read off the graph rather than counted here: the numbers were computed once when the
+            // snapshot was compiled, so asking how large it is costs nothing per plan.
+            var graph = loops.augmentedGraph();
+            lastGraphKeys = graph.keyCount();
+            lastGraphPatterns = graph.patternCount();
+            lastGraphEdges = graph.edgeCount();
         }
         switch (result.status()) {
             case COMPLETE, MISSING_INGREDIENTS -> { return withLoopsExpanded(loops, result); }
@@ -577,6 +586,7 @@ public final class Ae2PlannerBridge {
         var circuit = circuitBreaker.snapshot();
         var budget = tickBudget();
         return new Diagnostics(revision, hits, misses, lastStatus, lastDiagnostics,
+                lastGraphKeys, lastGraphPatterns, lastGraphEdges,
                 requestStats.inFlight(), requestStats.submitted(), requestStats.deduplicated(),
                 requestStats.cancelled(), workers.getActiveCount(), workers.getQueue().size(),
                 backpressureRejections, circuitRejections, circuit.state().name(), circuit.consecutiveFailures(),
@@ -586,7 +596,8 @@ public final class Ae2PlannerBridge {
     }
 
     public record Diagnostics(long revision, long cacheHits, long cacheMisses, String status,
-                              @Nullable PlanningResult.Diagnostics lastPlan, int inFlightRequests,
+                              @Nullable PlanningResult.Diagnostics lastPlan,
+                              int graphKeys, int graphPatterns, int graphEdges, int inFlightRequests,
                               long submittedRequests, long deduplicatedRequests, long cancelledRequests,
                               int activeWorkers, int queuedRequests, long backpressureRejections,
                               long circuitRejections, String circuitState, int consecutiveFailures,
