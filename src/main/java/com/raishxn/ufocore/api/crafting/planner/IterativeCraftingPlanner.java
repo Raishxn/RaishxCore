@@ -373,7 +373,7 @@ public final class IterativeCraftingPlanner<K> {
                 continue;
             }
             UfoAmount drawn = input.durable()
-                    ? multiply(input.amount(), ceil(option.runs, UfoAmount.of(input.uses())))
+                    ? durableDraw(state, option.pattern, input, option.runs, true)
                     : multiply(input.amount(), option.runs);
             if (input.key().equals(key)) {
                 selfConsumedPerRun = selfConsumedPerRun.add(input.amount());
@@ -405,6 +405,37 @@ public final class IterativeCraftingPlanner<K> {
             head = new Task<>(outside.get(i).key(), outsideDraws.get(i), depth + 1, null, null, head);
         }
         return head;
+    }
+
+    /** One durable carrier group: a pattern and the input key whose carriers it consumes. */
+    private record DurableGroup<K>(CompiledPattern<K> pattern, K key) {}
+
+    /**
+     * How many carriers a batch of {@code runs} more firings needs beyond what earlier batches of the
+     * same group already claimed. The increments telescope to the ceiling of the total firings, which
+     * is what the schedule really consumes; a ceiling per batch does not, and two ceilings of one and
+     * three firings across a carrier that lasts two add up to three carriers where two suffice.
+     */
+    private UfoAmount durableDraw(State state, CompiledPattern<K> pattern, PatternEntry<K> input,
+                                  UfoAmount runs, boolean commit) {
+        DurableGroup<K> group = new DurableGroup<>(pattern, input.key());
+        UfoAmount before = state.firings == null ? UfoAmount.ZERO
+                : state.firings.getOrDefault(group, UfoAmount.ZERO);
+        UfoAmount after = before.add(runs);
+        if (commit) {
+            if (state.firings == null) {
+                state.firings = new HashMap<>();
+            }
+            state.put(state.firings, group, after);
+        }
+        UfoAmount uses = UfoAmount.of(input.uses());
+        return multiply(ceil(after, uses).subtract(ceil(before, uses)), input.amount());
+    }
+
+    /** Firings of a durable group already claimed, so a capacity can be stated in what is left. */
+    private UfoAmount firingsClaimed(State state, CompiledPattern<K> pattern, PatternEntry<K> input) {
+        return state.firings == null ? UfoAmount.ZERO
+                : state.firings.getOrDefault(new DurableGroup<>(pattern, input.key()), UfoAmount.ZERO);
     }
 
     private List<Candidate<K>> candidates(ImmutableCraftingGraph<K> graph, K key, UfoAmount required,
@@ -464,7 +495,7 @@ public final class IterativeCraftingPlanner<K> {
                 if (input.reusable()) {
                     needed = input.amount();
                 } else if (input.durable()) {
-                    needed = multiply(input.amount(), ceil(runs, UfoAmount.of(input.uses())));
+                    needed = durableDraw(state, pattern, input, runs, false);
                 } else {
                     needed = multiply(input.amount(), runs);
                 }
@@ -476,7 +507,9 @@ public final class IterativeCraftingPlanner<K> {
                     UfoAmount carriers =
                             UfoAmount.of(available.asBigInteger().divide(input.amount().asBigInteger()));
                     capacity = capacity.min(input.durable()
-                            ? multiply(carriers, UfoAmount.of(input.uses())) : carriers);
+                            ? multiply(carriers, UfoAmount.of(input.uses()))
+                                    .subtractClamped(firingsClaimed(state, pattern, input))
+                            : carriers);
                 }
                 BigInteger gap = needed.subtractClamped(available).asBigInteger();
                 deficit = deficit.add(gap);
@@ -607,6 +640,13 @@ public final class IterativeCraftingPlanner<K> {
          * the same catalyst twice.
          */
         Map<K, UfoAmount> presence;
+        /**
+         * Firings already served by each durable carrier group. A carrier survives several firings, so
+         * a plan that expands the same recipe twice - once for its primary and again to chase a
+         * secondary - has to draw the carrier budget across the whole plan rather than at each ceiling
+         * separately, or it charges for a tool that the schedule never consumes.
+         */
+        Map<DurableGroup<K>, UfoAmount> firings;
         final Map<CraftingPattern<K>, UfoAmount> executions = new TreeMap<>(Comparator.comparing(CraftingPattern::id));
         final Set<K> active = new HashSet<>();
         final ArrayList<CraftingPlan.Execution<K>> schedule = new ArrayList<>();

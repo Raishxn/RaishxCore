@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-22 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 66 cases.
+23 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 69 cases.
 
-Representable today and therefore `REQUIRED`, 66 cases:
+Representable today and therefore `REQUIRED`, 69 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -100,6 +100,7 @@ Representable today and therefore `REQUIRED`, 66 cases:
 | `catalyst/returned-seed` | a declared catalyst, present once and handed back |
 | `catalyst/secondary-through-catalyst` | a secondary chased through a recipe carrying a catalyst |
 | `durability/finite-use-chain` | a carrier that survives a limited number of firings |
+| `durability/reuse-across-expansions` | a carrier budget shared across two expansions |
 | `fuzzy/variant-route` | a slot any of several variants may satisfy |
 | `emitter/authorized-stream` | an input an authorized external source supplies |
 | `probabilistic/chance-route` | a chance route that must not be promised to a request |
@@ -162,6 +163,14 @@ benchmark's own conflict case the allocation is byte-identical either way, `2024
 Weights are not yet supplied by the bridge. Nothing in AE2 says what a material is worth, so wiring
 them to provider priorities is still open; the API and the proof are what landed.
 
+## Carriers are per pattern
+
+A durable carrier is drawn per pattern and per key, not per firing and not across patterns. Two
+recipes consuming the same tool each keep their own budget, which over-reports rather than
+under-reports and is the safe direction for a shortage. The alternative — a single pool shared by
+every recipe that consumes the key — is a modelling question this corpus does not answer either way,
+and the planner and the oracle agree on the reading they do share.
+
 ## Scale
 
 The greedy trap runs at the reference suite's own scale, 32 independent conflicts, and resolves in
@@ -189,6 +198,7 @@ overhead above one on a required case. They are printed so they cannot be overlo
 
 | Cases | Was | Cause and fix |
 | --- | --- | --- |
+| `durability/reuse-across-expansions/{minimum,missing,unbounded}` | `FALSE_NEGATIVE` and `FALSE_POSITIVE` | A durable carrier budget was drawn at each expansion of a recipe rather than across the plan. Chasing a secondary output expands the same recipe twice, so the two ceilings of one and three firings charged three carriers where a carrier lasting two firings covers all four. The planner now draws the budget per pattern and the oracle does the same; the oracle had been internally inconsistent, using the total in its balance pass and per step in its ordered replay. |
 | `multi-dag/weighted-leaf-cost/missing` | `missingOverhead` 10.0 | The route comparison runs before the shortage comparison, and it counted leaf demand in bare units, so ten cheap units lost to one valuable unit and the declared weight was never consulted. Leaf keys are now priced at their declared weight, which puts the whole pass in the same currency as the shortage. |
 | `catalyst/secondary-through-catalyst/missing` | `missingOverhead` 1.200 | A catalyst was charged once per *expansion* of its recipe rather than once per plan. Chasing a secondary output separately from the primary expands the same recipe twice, so the presence check ran twice and demanded two catalysts when one is handed back and covers both. `State` now records the working stock already demanded and charges only the decay again. |
 | `byproduct/shared-coproduct/{minimum,unbounded}`, `byproduct/feeds-later-stage/{minimum,unbounded}` | `FALSE_NEGATIVE` | A demanded coproduct was resolved before the sibling route that produces it, so a composite whose coproduct key sorts before its routable keys reported an impossible shortage. `ImmutableCraftingGraph` now orders each pattern's inputs so that an input with a selectable route is resolved before an input that can only be collected as a deterministic coproduct. |
@@ -229,7 +239,7 @@ why the assertions are on deterministic invariants and the benchmark gates the n
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 22 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 23 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.

@@ -181,6 +181,9 @@ public final class CapabilityPlanReplay {
         Pool stockUsed = new Pool();
         Pool injectedUsed = new Pool();
         UfoAmount executedRuns = UfoAmount.ZERO;
+        // Firings each pattern has already asked of each durable input, so the carrier budget is
+        // drawn across the whole plan rather than restarted at every step.
+        Map<String, UfoAmount> firingsServed = new LinkedHashMap<>();
 
         for (CapabilityPlan.Step step : plan.schedule()) {
             CapabilityPattern pattern = byId.get(step.patternId());
@@ -216,7 +219,12 @@ public final class CapabilityPlanReplay {
                             stockUsed, injectedUsed, failures, supplyReportedMissing);
                     continue;
                 }
-                UfoAmount need = draw(input, step.runs());
+                String group = step.patternId() + '\u0000' + input.key();
+                UfoAmount before = firingsServed.getOrDefault(group, UfoAmount.ZERO);
+                UfoAmount need = drawShared(input, step.runs(), before);
+                if (input.kind() == CapabilityInput.Kind.FINITE_USE) {
+                    firingsServed.put(group, before.add(step.runs()));
+                }
                 need = crafted.take(input.key(), need);
                 UfoAmount fromStock = consumable.take(input.key(), need);
                 UfoAmount stockDraw = need.subtract(fromStock);
@@ -443,9 +451,28 @@ public final class CapabilityPlanReplay {
         if (input.kind() != CapabilityInput.Kind.FINITE_USE) {
             return input.amount().multiply(runs.asBigInteger());
         }
-        BigInteger[] quotient = runs.asBigInteger().divideAndRemainder(BigInteger.valueOf(input.uses()));
-        BigInteger carriers = quotient[1].signum() == 0 ? quotient[0] : quotient[0].add(BigInteger.ONE);
-        return input.amount().multiply(carriers);
+        return input.amount().multiply(carriers(runs, input.uses()));
+    }
+
+    private static BigInteger carriers(UfoAmount firings, int uses) {
+        BigInteger[] quotient = firings.asBigInteger().divideAndRemainder(BigInteger.valueOf(uses));
+        return quotient[1].signum() == 0 ? quotient[0] : quotient[0].add(BigInteger.ONE);
+    }
+
+    /**
+     * What one step draws of a durable input when the whole plan is taken into account. A carrier
+     * survives a fixed number of firings and the tool stays in the machine between batches, so two
+     * steps of the same pattern share the budget: the second step owes the difference between the
+     * ceiling of the firings so far and the ceiling before it, which telescopes to the ceiling of the
+     * total. Charging each step its own ceiling instead demanded three tools for four firings where two
+     * suffice, and disagreed with the balance pass, which had always used the total.
+     */
+    private static UfoAmount drawShared(CapabilityInput input, UfoAmount runs, UfoAmount before) {
+        if (input.kind() != CapabilityInput.Kind.FINITE_USE) {
+            return input.amount().multiply(runs.asBigInteger());
+        }
+        BigInteger owed = carriers(before.add(runs), input.uses()).subtract(carriers(before, input.uses()));
+        return input.amount().multiply(owed);
     }
 
     private static UfoAmount request(CapabilityPlan plan, String key) {

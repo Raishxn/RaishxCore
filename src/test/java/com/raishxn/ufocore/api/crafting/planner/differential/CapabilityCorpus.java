@@ -70,6 +70,7 @@ public final class CapabilityCorpus {
         addConversionRing(scenarios);
         addSurplusSecondaryDemand(scenarios);
         addSecondaryThroughCatalyst(scenarios);
+        addDurabilityAcrossExpansions(scenarios);
         addWeightedShortage(scenarios);
         addWeightedLeafCost(scenarios);
         addChanceRoute(scenarios);
@@ -318,6 +319,33 @@ public final class CapabilityCorpus {
      * is present once and handed back no matter how many times its recipe fires, including the extra
      * firings that exist only to yield the secondary.
      */
+    /**
+     * A durable carrier survives a fixed number of firings, and the secondary-demand shape fires the
+     * same recipe twice: once for the primary it is asked for and again for the secondary it is chased
+     * for. A carrier budget divided between the two expansions instead of across the whole plan looks
+     * like a shortage of tools where two are enough for four firings.
+     */
+    private static void addDurabilityAcrossExpansions(List<CapabilityScenario> out) {
+        Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
+                CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.FINITE_DURABILITY);
+        Map<String, UfoAmount> minimum = amounts(Map.of("ore", 4L, "tool", 2L));
+        Map<String, UfoAmount> starved = amounts(Map.of("ore", 4L));
+        threeModes(out, "durability/reuse-across-expansions", CapabilityFamily.FINITE_DURABILITY, 2,
+                "finished", UfoAmount.ONE, minimum, starved,
+                List.of(amounts(Map.of("tool", 2L))), true, semantics,
+                CapabilityExpectation.REQUIRED, CapabilityCorpus::durabilityAcrossExpansions);
+    }
+
+    private static CapabilityGraph durabilityAcrossExpansions(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("refine",
+                        List.of(input("ore", 1), CapabilityInput.finiteUse("tool", 1, 2)),
+                        List.of(primary("bloom", 1), byproduct("slag", 1))),
+                CapabilityPattern.of("assemble", List.of(input("bloom", 1), input("slag", 4)),
+                        List.of(primary("finished", 1))));
+        return graph(patterns, stock);
+    }
+
     private static void addSecondaryThroughCatalyst(List<CapabilityScenario> out) {
         Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
                 CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.REUSABLE_INPUT);
