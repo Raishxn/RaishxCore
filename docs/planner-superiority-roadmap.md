@@ -870,6 +870,10 @@ Pendente no R2.2:
 
 ### R2.5 — catalisadores, durabilidade e feedback
 
+Catalisadores e usos finitos estão implementados e verificados; o desenho das quatro
+famílias de ciclo, com a aritmética de seed, o contrato de balanço e a ordem de tarefas
+que cada uma exige, está em [planner-feedback-cycles.md](planner-feedback-cycles.md).
+
 - estoque reutilizável;
 - usos finitos;
 - SCC e seeds;
