@@ -112,12 +112,34 @@ pattern and those claimed after it, then assembling `outside → pattern → fee
 
 ## Oracle support
 
-Only the conversion ring and the multi-key cycles need oracle work. A self-feeding
-pattern with exact inputs and deterministic outputs is already replayable:
-`isReplayable` accepts it, the ordered replay draws the self-feed from the pattern's own
-output because the schedule puts the pattern first, and the declared balance is checked
-as usual. That is why self-growth is the right first step: the verification already
-exists and only the planner has to change.
+`isReplayable` already accepts a self-feeding pattern, but that is not enough: the
+ordered replay cannot fund one.
+
+A replay step draws **all** of its inputs before producing any output, computed as
+`input.amount × step.runs`. For every other pattern that is correct, because the whole
+batch really is on hand before the pattern runs. For a self-feeding one it is not: the
+plan schedules a single step of seven runs, so the replay demands seven units up front,
+finds one seed, and reports `unfunded input A`.
+
+This was found by implementing the planner half alone. The planner's arithmetic was
+right — it scheduled the seven runs and balanced — and `cycle/self-growth/minimum`
+still failed replay with `unfunded input A at a-grows` and a residue of six. Both halves
+are needed and neither is useful alone.
+
+Funding is inherently progressive: each run pays for the next. The replay has to model
+it that way, but not by iterating, or a request of a billion would become a billion
+steps. The closed form:
+
+```text
+c, p   per-run consumed and produced of the key
+n      runs in the step
+seed   max(0, c − crafted)     what crafted alone cannot cover
+```
+
+The step is fundable when `crafted + consumable + injected >= c`. The external draw is
+exactly `seed`, taken from `consumable` and then `injected` the way other steps do it,
+and after the step `crafted += n·p − n·c + seed`. A run-by-run simulation produces the
+same pools, without the loop.
 
 ## Gates
 
