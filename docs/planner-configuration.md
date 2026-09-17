@@ -55,6 +55,11 @@ reasoned over. They are counted once when the snapshot is compiled rather than o
 demand, so an operator asking how large the graph is does not make every plan pay
 for the ability to answer.
 
+`lastPlan.backtracks` counts how contested the plan was: a route was tried and had
+to be taken back to try another. Which link of the comparison decided a choice is
+deliberately not recorded, because naming it would mean comparing every candidate
+twice on every plan, for a number only a diagnostic reads.
+
 `lastPlan.cycleCuts` counts the routes refused because they would have to reach
 into a key the plan is already expanding. It is what explains a shortage that looks
 like it should have had a route, and counting it costs a single increment.

@@ -92,6 +92,10 @@ public final class PlannerDiagnosticsReport {
                     // Routes refused because they would have to reach into a key the plan is already
                     // expanding. It explains a shortage that looks like it should have a route.
                     .append(",\"cycleCuts\":").append(lastPlan.cycleCuts())
+                    // How contested the plan was: a route was tried and had to be taken back. The link
+                    // of the comparison that decided a choice is deliberately not recorded, because
+                    // naming it would mean comparing every candidate twice on every plan.
+                    .append(",\"backtracks\":").append(lastPlan.backtracks())
                     .append('}');
         }
         return json.append('}').toString();
@@ -100,14 +104,14 @@ public final class PlannerDiagnosticsReport {
     /** The plan diagnostics as this renderer needs them, so the shape is pinned in one place. */
     private record PlanningResultDiagnostics(long graphRevision, long operations, int maximumDepth,
                                              long elapsedNanos, PlanningResult.ShortageSummary shortage,
-                                             long cycleCuts) {
+                                             long cycleCuts, long backtracks) {
     }
 
     private static PlanningResultDiagnostics lastPlan(Ae2PlannerBridge.Diagnostics diagnostics) {
         var plan = diagnostics.lastPlan();
         return plan == null ? null
                 : new PlanningResultDiagnostics(plan.graphRevision(), plan.operations(),
-                        plan.maximumDepth(), plan.elapsedNanos(), plan.shortage(), plan.cycleCuts());
+                        plan.maximumDepth(), plan.elapsedNanos(), plan.shortage(), plan.cycleCuts(), plan.backtracks());
     }
 
     private static String escape(String value) {

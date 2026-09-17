@@ -777,8 +777,12 @@ Os **cortes de ciclo** também saem, como `lastPlan.cycleCuts`: quantas rotas fo
 terem que entrar numa chave que o plano já está expandindo. É o que explica um shortage que parecia
 ter rota, e contar custa um incremento.
 
-Falta a **rota escolhida e por quê**. A escolhida já está visível em `patternExecutions`; o "por quê"
-exigiria o planner registrar qual elo do comparador decidiu cada escolha, e isso ainda não existe. O `gap do solver` fica sem sentido enquanto a Fase 4 não
+A **rota escolhida** está visível em `patternExecutions`, e o quanto ela foi disputada sai como
+`lastPlan.backtracks`: quantas vezes o plano recuou para tentar outra rota. O elo exato do comparador
+que decidiu cada escolha não é registrado, de propósito — nomeá-lo significaria comparar cada
+candidato duas vezes em todo plano, por um número que só um diagnóstico lê. Com isso a lista de
+observabilidade está coberta até onde ela é barata; o que falta nela é o que exigiria pagar no
+caminho quente. O `gap do solver` fica sem sentido enquanto a Fase 4 não
 existir, e está registrado como tal lá.
 
 ## 14. Compatibilidade, API e rollout
