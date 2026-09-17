@@ -77,7 +77,7 @@ simulated residue with the declared one. It proves, per case:
 
 18 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 54 cases.
 
-Representable today and therefore `REQUIRED`, 51 cases:
+Representable today and therefore `REQUIRED`, 54 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -98,25 +98,27 @@ Representable today and therefore `REQUIRED`, 51 cases:
 | `durability/finite-use-chain` | a carrier that survives a limited number of firings |
 | `fuzzy/variant-route` | a slot any of several variants may satisfy |
 | `emitter/authorized-stream` | an input an authorized external source supplies |
+| `probabilistic/chance-route` | a chance route that must not be promised to a request |
 
-Declared limitations, refused before planning because the model cannot represent them yet, 3 cases:
+There are no declared limitations left. `probabilistic/chance-route` was the last one, and it was
+worth declaring because the wrong answer is plausible rather than obviously broken: the target has a
+deterministic route and a chance route, and only the chance route's input is in stock, so a planner
+that treats a probabilistic output as an output answers the request from the wrong material and
+reports it complete. The guaranteed answer is that every unit has to come from the deterministic
+route, and that is now what the engine returns.
 
-| Group | Required semantics |
-| --- | --- |
-| `probabilistic/chance-route` | `PROBABILISTIC_OUTPUT` |
+The reading is that a chance output is not production, not demand and not a route, so the guaranteed
+problem is the one without it. The corpus builds the case so a planner that counted the roll would
+answer from the wrong stock and be caught, and the oracle drops the roll the same way, so neither
+side can pass by agreeing with the other about a promise that was never made.
 
-The chance route family is declared because the wrong answer is a plausible one rather than an
-obviously broken one: the target has both a deterministic route and a chance route, and only the
-chance route's input is in stock, so a planner that treats a probabilistic output as an output
-answers the request from the wrong material and reports it complete. The guaranteed answer is that
-every unit has to come from the deterministic route.
-
-It is the one family the reference does not answer either: its adapter declines the case outright
-rather than guessing, so this is open work for both engines rather than a gap behind one of them.
+The reference does not answer this family: its adapter declines the case rather than guessing, so on
+this one the engine is ahead rather than behind.
 
 A limitation is never counted as support, even when the diagnostic forced execution happens to
-replay: it is listed separately in the report. The refusal loop is kept in the suite for exactly
-this family, because a family that is never refused is a refusal path that is never tested.
+replay: it is listed separately in the report. With none left, that machinery is driven by a planner
+stub that declines everything, so the refusal path is still exercised by a case rather than by
+nothing.
 
 ## Documented deviations from the reference standard
 
@@ -164,19 +166,20 @@ therefore still not planned, even when firing its producing pattern would collec
 asserted by `PlannerConservationTest.byproductsStayAvailableAndCannotBeSelectedAsAe2PrimaryOutputs`,
 and it belongs to the explicit output-role model of roadmap phase R2.3.
 
-## Non-minimal shortage, recorded not asserted
+## Shortage quality
 
-`multi-dag/fibonacci-depth12/missing` returns a valid but non-minimal report
-(`missingOverhead = 6.857`). That matches the behaviour the reference standard documents for its own
-multi-route Fibonacci case. It is printed as a finding, and the case is excluded from the
-`canonicalShortagesAreMinimal` assertion because only one minimum witness is retained.
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 18 of
+them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
+used to be the exception at 6.857, matching what the reference standard documents for its own
+multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.
+An overhead above one on a required case stays advisory rather than fatal, so a regression here is
+reported loudly without pretending the plan is invalid.
 
 ## Next steps
 
 1. Add a corpus case for the remaining byproduct boundary, with the output-role semantics it needs,
    so the refusal is measured rather than only asserted by a unit test.
 2. Extend the corpus with the remaining reference-scale cases and the Raishx additional corpus
-   (`BigInteger` extremes, wide graphs, probabilistic outputs, item plus fluid, lifecycle
-   cancellation, concurrent grids).
+   (`BigInteger` extremes, wide graphs, item plus fluid, lifecycle cancellation, concurrent grids).
 3. Add the Thunderbolt V2 and AE2 adapters behind the same `CapabilityPlanner` contract and freeze
    the environment for the first real differential report.

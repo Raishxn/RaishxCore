@@ -137,7 +137,10 @@ class CapabilityPlanReplayTest {
         assertTrue(CapabilityPlanReplay.isReplayable(catalyst));
         assertTrue(CapabilityPlanReplay.isReplayable(fuzzy));
         assertTrue(CapabilityPlanReplay.isReplayable(emitter));
-        assertFalse(CapabilityPlanReplay.isReplayable(probabilistic));
+        // So is a chance output, and for the opposite reason to the others: it is not that the oracle
+        // can honour the roll, it is that it drops it. The pattern promises less than it says, and a
+        // plan that leaned on the roll would come out unfunded rather than approved.
+        assertTrue(CapabilityPlanReplay.isReplayable(probabilistic));
     }
 
     private static CapabilityGraph chainGraph(Map<String, Long> stock) {

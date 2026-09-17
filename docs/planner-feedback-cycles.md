@@ -110,7 +110,7 @@ and confirms the plan. AE2-VM solves the same shape with exact rational arithmet
 floating comparison there would produce a plan that cannot be executed. The guard here is
 integral instead, so the question does not arise.
 
-## What the two catalyst loops need on top
+## What the two catalyst loops needed on top
 
 Both span several keys and both recycle one of them, so the self-feeding split is not
 enough: it is the strongly connected component that has to be reasoned about, with one
@@ -237,23 +237,25 @@ rejected a plan that extracted ten units from a stock of eight.
 
 ## Gates
 
-The corpus moves `cycle/self-growth` and `cycle/conversion-ring` from declared limitations
-to required — `required supported=45/45`, `limitation cases supported but not claimed=0/6`
-— and the `MINIMAL_SHORTAGE_CASES` list gains the missing mode of each, so the seed
-shortage is pinned. The refill path must complete, which is what proves a reported seed is
-both necessary and sufficient.
+The corpus moves every family this document describes from a declared limitation to a required
+capability: self-growth and the conversion ring first, then both catalyst loops, then the chance
+route. `required supported=54/54 confirmed defects=0 limitation cases supported but not claimed=0/0`,
+with zero false positives and zero false negatives across all three material modes, over 54 cases in
+18 groups.
 
-The chance-output family keeps the refusal loop in the suite with a real case to run on: a family
-that is never refused is a refusal path that is never tested, and the probabilistic case is the one
-where the wrong answer is plausible rather than obviously broken. Both are optimal on
-the missing mode — `overhead=1.000`, the exact witness — where the naive model would have reported
-eleven units against ten.
+The `MINIMAL_SHORTAGE_CASES` list gains the missing mode of each family as it lands, so the frontier
+is pinned rather than merely present. The refill path must complete, which is what proves a reported
+seed or shortage is both necessary and sufficient.
 
-Because the bucket is empty, `declaredLimitationsAreNeverCountedAsSupport` no longer has a case to
-run on. The refusal loop stays anyway, and the test that used to require a limitation to exist now
-requires that none does, so a limitation that reappears is a finding either way.
+Both catalyst loops are optimal on the missing mode — `overhead=1.000`, the exact witness — where the
+naive model would have reported eleven units against ten, and that difference is exactly what the
+witness assertion catches.
 
-ThunderboltV2 is optimal on 16 of the 17 missing-mode cases and eight times over on
-`cycle/self-growth`; RaishxCore is optimal on all 17. Claim level across the corpus is 34 complete and
-17 shortage for RaishxCore against 33 and 18 for the reference, the difference being self-growth at
-minimum stock, where the reference reports a shortage on a scenario that is feasible.
+With nothing declared, the refusal machinery is driven by a planner stub that declines every case
+rather than by a family that happens to be missing: a capability that is never refused is a refusal
+path that is never tested, and leaving it to a family that happens to be missing is how it rots.
+
+RaishxCore is now optimal on all 18 missing-mode cases. ThunderboltV2 is optimal on 16, eight times
+over on `cycle/self-growth`, and does not answer the chance-output family at all. Claim level across
+the corpus is 36 complete and 18 shortage for RaishxCore, against 33 and 18 with three unanswered for
+the reference.

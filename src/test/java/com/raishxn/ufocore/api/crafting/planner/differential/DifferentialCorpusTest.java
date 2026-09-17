@@ -56,7 +56,10 @@ class DifferentialCorpusTest {
             // turn. The lossy one is the sharper check: charging every turn instead of every turn but
             // the last reports eleven where ten suffices, and the witness pins ten.
             "catalyst/raw-feedback-loop",
-            "catalyst/lossy-feedback-loop");
+            "catalyst/lossy-feedback-loop",
+            // The chance route promises nothing, so the guaranteed frontier is the whole deterministic
+            // request: eight ore, not something discounted by the odds of the other route.
+            "probabilistic/chance-route");
 
     private static DifferentialHarness.Report report;
 
@@ -103,7 +106,7 @@ class DifferentialCorpusTest {
         // a key that is being expanded, and the leaf-cost pass already leaves keys on a cycle out of
         // the cost map rather than failing, so the ring was a safe decline that turned out to be a
         // capability the engine had all along and never claimed.
-        assertEquals(51, report.supportedRequired());
+        assertEquals(54, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
@@ -124,9 +127,11 @@ class DifferentialCorpusTest {
                             + entry.classification());
         }
         assertEquals(0, report.supportedLimitations());
-        // Chance outputs are the one family still declared, and it is declared because a planner that
-        // counted them would answer probabilistic/chance-route from raw stock and call it complete.
-        assertEquals(3, report.of(CapabilityExpectation.LIMITATION).size());
+        // A chance output is claimed by dropping it from the guaranteed problem, which is the only
+        // reading that cannot promise a deterministic request something the world may not deliver, so
+        // nothing is declared any more. The refusal machinery is exercised beside this by a planner
+        // stub that declines, rather than by a family that happens to be missing.
+        assertEquals(0, report.of(CapabilityExpectation.LIMITATION).size());
     }
 
     @Test void everyResultIsDeterministic() {
@@ -157,9 +162,10 @@ class DifferentialCorpusTest {
                 CapabilityFamily.REUSABLE_CATALYST, CapabilityFamily.FINITE_DURABILITY,
                 CapabilityFamily.FUZZY_VARIANT, CapabilityFamily.EMITTER,
                 CapabilityFamily.POSITIVE_FEEDBACK, CapabilityFamily.CONVERSION_CYCLE,
-                CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
+                CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK,
+                CapabilityFamily.PROBABILISTIC_OUTPUT),
                 required);
-        assertEquals(Set.of(CapabilityFamily.PROBABILISTIC_OUTPUT), limitations);
+        assertEquals(Set.of(), limitations);
     }
 
     @Test void reportContainsEveryFieldTheStandardRequires() {

@@ -319,7 +319,7 @@ public final class CapabilityCorpus {
                         List.of(primary("dross", 1), CapabilityOutput.probabilistic("gem", 1))));
         threeModes(out, "probabilistic/chance-route", CapabilityFamily.PROBABILISTIC_OUTPUT, 8, "gem",
                 UfoAmount.of(8), minimum, starved, List.of(amounts(Map.of("ore", 8L))), true, semantics,
-                CapabilityExpectation.LIMITATION, stock -> new CapabilityGraph(patterns, consumable(stock)));
+                CapabilityExpectation.REQUIRED, stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 
     private static void addSelfGrowth(List<CapabilityScenario> out) {

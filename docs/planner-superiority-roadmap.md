@@ -54,10 +54,14 @@ subconjunto de outputs craftáveis, catalisadores presentes-e-devolvidos,
 catalisadores que decaem por disparo, portadores de uso finito, slots fuzzy e
 inputs emitidos por fonte autorizada. A ponte AE2 ainda recusa:
 
-- outputs probabilísticos, porque a garantia é menor que um e prometer uma saída
-  que pode não vir é pior do que recusar; a família segue declarada como limitação
-  (`probabilistic/chance-route`) e nenhum dos dois motores a responde;
 - padrões sem definição estável.
+
+Outputs probabilísticos saíram da lista, mas apenas na leitura garantida: uma saída de
+chance não é produção, não é demanda e não é rota, então o problema garantido é o que
+não a contém, e é isso que a ponte resolve agora. O que continua fora é **explorar** a
+rolagem como excedente esperado — oferecer a rota de chance como algo que rende na
+média. Isso exigiria o motor carregar probabilidade, e não está feito. É a única família
+que a referência também não responde.
 
 O restante da lista anterior — fuzzy, remainder/container retornável, feedback
 entre input e output incluindo catalisadores, emitters e inputs com mais de uma

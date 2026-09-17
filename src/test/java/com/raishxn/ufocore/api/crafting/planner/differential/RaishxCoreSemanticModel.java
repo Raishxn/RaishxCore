@@ -43,7 +43,12 @@ public final class RaishxCoreSemanticModel {
             CapabilitySemantics.POSITIVE_FEEDBACK,
             CapabilitySemantics.CONVERSION_CYCLE,
             CapabilitySemantics.CONSERVATIVE_FEEDBACK,
-            CapabilitySemantics.LOSSY_FEEDBACK));
+            CapabilitySemantics.LOSSY_FEEDBACK,
+            // Claimed by dropping the chance output from the guaranteed problem, which is what the
+            // semantics asks for: a probabilistic output is never promised to a deterministic request.
+            // What is not claimed is exploiting the roll as expected extra, and the corpus case is
+            // written so that a planner which counted it would answer from the wrong stock.
+            CapabilitySemantics.PROBABILISTIC_OUTPUT));
 
     private RaishxCoreSemanticModel() {
     }
@@ -146,9 +151,12 @@ public final class RaishxCoreSemanticModel {
         }
         LinkedHashMap<String, UfoAmount> outputs = new LinkedHashMap<>();
         for (CapabilityOutput output : pattern.outputs()) {
+            // A chance output is dropped rather than modelled: its guarantee is below one, so it is
+            // neither a route nor production, and the guaranteed problem is the one without it. The
+            // engine is then asked for the frontier it can actually promise, and the oracle checks the
+            // same reading, so a plan that leaned on the roll could not pass either side.
             if (output.kind() == CapabilityOutput.Kind.PROBABILISTIC) {
-                throw new UnsupportedSemantics(
-                        "pattern " + pattern.id() + " declares probabilistic output " + output.key());
+                continue;
             }
             outputs.merge(output.key(), output.amount(), UfoAmount::add);
         }

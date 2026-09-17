@@ -19,23 +19,41 @@ class RaishxCoreCapabilityPlannerTest {
             new RaishxCoreCapabilityPlanner(Duration.ofSeconds(5));
 
     /**
-     * A declared limitation must be refused before planning rather than planned wrongly. The chance
-     * output family is the one still declared, and it is declared precisely because the wrong answer
-     * is a plausible one: treating a probabilistic output as an output answers the request from the
-     * wrong stock and reports it complete. The loop over the required families beside it keeps the
-     * other direction honest, since every semantics they use has to be one the model claims.
+     * Every family is claimed now, so the corpus has no declared limitation left to exercise the
+     * refusal machinery with. Leaving that machinery untested because nothing needs it is how it
+     * rots, so it is driven here by a planner that declines everything: whatever the reason, a
+     * declined case must never be counted as support.
      */
-    @Test void everyDeclaredLimitationIsRefusedAndEveryRequiredSemanticIsClaimed() {
-        List<CapabilityScenario> limitations = CapabilityCorpus.limitations();
-        assertFalse(limitations.isEmpty(),
-                "the refusal path has no case to run on, so it is not being tested");
-        for (CapabilityScenario scenario : limitations) {
-            CapabilityPlanner.Check check = planner.check(scenario);
-            assertFalse(check.accepted(), () -> scenario.label() + " must be refused");
-            assertTrue(check.reason().contains("cannot represent"), check.reason());
-            assertEquals(CapabilityPlanner.Outcome.Kind.DECLINED,
-                    planner.plan(scenario).kind(), scenario.label());
+    @Test void aPlannerThatDeclinesEverythingIsNeverCountedAsSupport() {
+        CapabilityPlanner declining = new CapabilityPlanner() {
+            @Override public String name() {
+                return "declines-everything";
+            }
+
+            @Override public Check check(CapabilityScenario scenario) {
+                return Check.reject("declined for the test");
+            }
+
+            @Override public Outcome plan(CapabilityScenario scenario) {
+                return Outcome.declined("declined for the test");
+            }
+        };
+        DifferentialHarness.Report report = new DifferentialHarness(declining,
+                new CapabilityRunner(Duration.ofSeconds(5), Duration.ofMillis(500))).run();
+
+        assertEquals(0, report.supportedRequired());
+        assertEquals(0, report.supportedLimitations());
+        for (DifferentialHarness.Entry entry : report.entries()) {
+            assertFalse(entry.run().supported(),
+                    () -> entry.id() + " was counted as support by a planner that refused it");
         }
+    }
+
+    /** Nothing may be declared as a limitation while the model claims every semantics it uses. */
+    @Test void everyDeclaredSemanticIsClaimed() {
+        assertTrue(CapabilityCorpus.limitations().isEmpty(),
+                () -> "a declared limitation is a finding now: " + CapabilityCorpus.limitations().stream()
+                        .map(CapabilityScenario::label).toList());
         for (CapabilityScenario scenario : CapabilityCorpus.required()) {
             for (CapabilitySemantics semantics : scenario.requiredSemantics()) {
                 assertTrue(RaishxCoreSemanticModel.supports(semantics), () -> scenario.label()
@@ -46,8 +64,8 @@ class RaishxCoreCapabilityPlannerTest {
 
     @Test void acceptsEveryRepresentableScenario() {
         List<CapabilityScenario> required = CapabilityCorpus.required();
-        // 39 before the feedback and cycle families were activated; all four are representable now.
-        assertEquals(51, required.size());
+        // 39 before the feedback, cycle and chance families were activated; all are representable now.
+        assertEquals(54, required.size());
         for (CapabilityScenario scenario : required) {
             assertTrue(planner.check(scenario).accepted(),
                     () -> scenario.label() + " must be admitted: " + planner.check(scenario).reason());

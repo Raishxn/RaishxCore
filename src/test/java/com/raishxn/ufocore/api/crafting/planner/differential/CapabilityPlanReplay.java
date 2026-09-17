@@ -117,6 +117,10 @@ public final class CapabilityPlanReplay {
                 addInto(demand, input.key(), draw(input, entry.getValue()));
             }
             for (CapabilityOutput output : pattern.outputs()) {
+                // A chance output is not production. Counting it here would balance the declared
+                // numbers against material the world never promised, which is exactly the mistake the
+                // probabilistic family exists to catch.
+                if (!guarantees(output)) continue;
                 addInto(produced, output.key(), output.amount().multiply(entry.getValue().asBigInteger()));
             }
         }
@@ -231,10 +235,11 @@ public final class CapabilityPlanReplay {
                 }
             }
             for (CapabilityOutput output : pattern.outputs()) {
-                if (output.kind() == CapabilityOutput.Kind.PROBABILISTIC) {
-                    failures.add("probabilistic output " + output.key() + " cannot be replayed");
-                    continue;
-                }
+                // Contributes nothing guaranteed, so a plan that leaned on it fails below as an
+                // unfunded input or an unproduced target. That is the assertion: the plan has to stand
+                // up on the guaranteed outputs alone, and the oracle does not need to know the odds to
+                // say so.
+                if (!guarantees(output)) continue;
                 // The self-fed key was already netted across the whole step by the funding above.
                 if (output.key().equals(selfFed)) continue;
                 crafted.add(output.key(), output.amount().multiply(step.runs().asBigInteger()));
@@ -329,14 +334,25 @@ public final class CapabilityPlanReplay {
     }
 
     private static boolean isReplayable(CapabilityPattern pattern) {
+        // Only the inputs can make a pattern unreplayable. A chance output used to as well, which was
+        // the wrong way round: it is not that the oracle cannot replay such a pattern, it is that the
+        // pattern promises less, and dropping the roll is exactly what the oracle does.
         return pattern.inputs().stream().allMatch(input ->
-                        input.kind() == CapabilityInput.Kind.EXACT
-                                || input.kind() == CapabilityInput.Kind.REUSABLE
-                                || input.kind() == CapabilityInput.Kind.FINITE_USE
-                                || input.kind() == CapabilityInput.Kind.FUZZY
-                                || input.kind() == CapabilityInput.Kind.EMITTER)
-                && pattern.outputs().stream().noneMatch(output ->
-                        output.kind() == CapabilityOutput.Kind.PROBABILISTIC);
+                input.kind() == CapabilityInput.Kind.EXACT
+                        || input.kind() == CapabilityInput.Kind.REUSABLE
+                        || input.kind() == CapabilityInput.Kind.FINITE_USE
+                        || input.kind() == CapabilityInput.Kind.FUZZY
+                        || input.kind() == CapabilityInput.Kind.EMITTER);
+    }
+
+    /**
+     * True when an output is promised rather than rolled for. A probabilistic output has a guarantee
+     * below one, so the guaranteed problem is the one without it: it is not demand, not production and
+     * not a route. Discarding it is the safe reading, and the only one that cannot promise a
+     * deterministic request something the world may not deliver.
+     */
+    private static boolean guarantees(CapabilityOutput output) {
+        return output.kind() != CapabilityOutput.Kind.PROBABILISTIC;
     }
 
     /** The keys that may satisfy a slot: any accepted variant for a fuzzy one, else just its key. */
