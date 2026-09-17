@@ -303,7 +303,10 @@ de uma chave e medir a fatia.
 
 Alvo padrão: até 2 ms por grid/tick, com orçamento global adicional para impedir
 que muitas grids consumam 2 ms cada no mesmo tick. A fatia default é 2 ms/512
-arestas por grid e o orçamento global é 4 ms por tick, com rodízio entre grids.
+arestas por grid e o orçamento global é 4 ms por tick. O rodízio existe entre as
+capturas de **uma mesma grid**; entre grids o pump percorre as bridges ativas sem
+rotação e para quando o orçamento acaba, então uma grid pode esperar vários ticks
+- mas termina, porque a captura é finita (`docs/planner-cooperative-capture.md`).
 O alvo de p95 medido continua pendente: uma fatia só termina entre duas chaves.
 
 Uma alternativa futura é manter snapshot imutável por eventos de mutação. Ela
@@ -742,7 +745,8 @@ e o soak com grids reais continua pendente.
       (sessões multi-engine entram no R2.7).
 - [ ] Engine não cooperativo isolado sem bloquear AE2 ou nova grid.
 - [x] Métricas p50/p95/p99, fila, cache e memória disponíveis: histogramas de
-      fatia (por grid) e de tick (todos os grids), acumuladores por fase da
+      fatia e de tick (ambos server-wide, uma única instância de
+      `CaptureMetrics`), acumuladores por fase da
       fatia, fila, cache, bytes e orçamento restante em `Diagnostics`; não há
       exportador externo de métricas.
 

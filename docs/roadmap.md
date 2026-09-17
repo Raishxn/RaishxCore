@@ -35,7 +35,7 @@ performance.
 
 - [x] Replace monolithic server-thread graph capture with cooperative capture
       budgeted across ticks: resumable state machine, per-grid slice, shared tick
-      budget with rotation, byte-bounded cache, cancellation in every transition
+      budget (rotation within a grid's own captures, not across grids), byte-bounded cache, cancellation in every transition
       and AE2 fallback only after the whole attempt was discarded
       ([planner-cooperative-capture.md](planner-cooperative-capture.md)).
 - [x] Make the slice interruptible inside a key (per-pattern cursor) so it no longer

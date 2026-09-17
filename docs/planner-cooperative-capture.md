@@ -50,8 +50,12 @@ Three limits apply at the same time:
    slice. The edge allowance makes a slice reproducible in tests; the time allowance is a
    safety net.
 3. **Shared tick budget** (`snapshot.tickBudgetMillis`) bounds what all grids together may
-   spend on capture in one tick. Captures are visited in rotating order, so one grid cannot
-   starve another.
+   spend on capture in one tick. Rotation is applied **inside one grid**, across that grid's own
+   pending captures; across grids, `Ae2PlannerBridge.tick()` walks the active bridges in set
+   order and stops once the shared budget is exhausted, so a grid not reached in one tick waits
+   for the next. Because a capture is finite and the budget resets every tick, every grid is
+   eventually served - but that is a completion guarantee, not a per-tick wait bound. The
+   bounded-wait fairness proof belongs to the harness pump, which does rotate across grids.
 
 Guarantees:
 
@@ -157,8 +161,10 @@ registered first so that a pump which stopped at the first exhausted budget woul
 two. The slow provider burns 4 ms - more than the whole tick budget - inside one `getPatternPriority`
 call, which is a slice's atomic tail. Observed: 15 slices over 8 ticks for the three captures, five
 slow calls, every request planned exactly by the Core, no capture left pending, no backpressure
-rejection and no circuit rejection on any grid. The overrun is charged to the shared budget in full,
-the other grids simply wait for the next tick, and the rotation is what guarantees they are served.
+rejection and no circuit rejection on any grid. The overrun is charged to the shared budget in full
+and the other grids simply wait for the next tick. What carries the test is that each capture is
+finite and the budget resets every tick - the deployed bridge does not rotate across grids, so this
+is a no-starvation result, not a per-tick fairness result.
 
 ## Fallback policy
 
@@ -219,8 +225,9 @@ grew past its allowance, a sliced capture that changed the graph, a capture larg
 allowance that was never sliced, a p95 above the target, an incomplete capture, and a
 starved multi-grid run.
 
-`plannerCaptureSlices` (`CaptureSliceHarness`) drives the production machine through the
-same pump the bridge runs - rotating grid order, one shared budget per simulated tick - and
+`plannerCaptureSlices` (`CaptureSliceHarness`) drives the production capture machine through a
+harness-owned pump - rotating grid order, one shared budget per simulated tick. That pump is not
+`Ae2PlannerBridge.tick()`, which does not rotate across grids - and
 reports the table above. It gates on the deterministic invariants plus a p95 ceiling for the
 costed cases, and it compares every sliced capture with an unbounded capture of the same grid.
 
@@ -262,8 +269,15 @@ one batch per scenario so grid and config state cannot race):
   grids and a few ticks; a long run against a real world, with many players and grids coming and
   going, belongs to Gate R.
 - **A blocking adapter call is contained, not preempted.** A provider that blocks inside a slice
-  holds the server thread for that call; the capture charges the overrun and keeps the other grids
-  on their rotation, but it cannot shorten the call itself.
+  holds the server thread for that call; the capture charges the overrun to the shared budget,
+  but it cannot shorten the call itself.
+- **The production pump does not rotate across grids.** `Ae2PlannerBridge.tick()` iterates the
+  active bridges in unordered set order and breaks once the shared budget is exhausted, so a grid
+  reached late in that order can wait several ticks. `CaptureBudgetPool` still bounds the total
+  per-tick cost, and every grid finishes because captures are finite, but the bounded-wait
+  fairness property the harness gates is not proven for the deployed scheduler.
+- **Slice percentiles are server-wide, not per grid.** `CaptureMetrics` is one static instance, so
+  the slice histogram aggregates every grid. Per-grid percentiles would need a meter per bridge.
 - **The corpus does not cover capture behaviour.** `plannerDifferential` still measures the
   planner, not the capture; the capture guarantees live in unit tests and GameTests.
 - **The deferred path is not benchmarked.** `plannerBenchmark` exercises the planner API

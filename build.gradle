@@ -189,6 +189,15 @@ tasks.named('jar').configure {
     }
 }
 
+// The sources artifact carries the same license as the runtime artifact, so a
+// published -sources.jar is never license-less on its own.
+tasks.named('sourcesJar').configure {
+    from('LICENSE.md') {
+        into 'META-INF'
+        rename { 'LICENSE-raishxcore.md' }
+    }
+}
+
 publishing {
     publications {
         register('mavenJava', MavenPublication) {
