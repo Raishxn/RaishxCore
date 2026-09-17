@@ -32,7 +32,8 @@ class RaishxCoreCapabilityPlannerTest {
 
     @Test void acceptsEveryRepresentableScenario() {
         List<CapabilityScenario> required = CapabilityCorpus.required();
-        assertEquals(39, required.size());
+        // 39 before self-growth was activated; the family is representable now.
+        assertEquals(42, required.size());
         for (CapabilityScenario scenario : required) {
             assertTrue(planner.check(scenario).accepted(),
                     () -> scenario.label() + " must be admitted: " + planner.check(scenario).reason());

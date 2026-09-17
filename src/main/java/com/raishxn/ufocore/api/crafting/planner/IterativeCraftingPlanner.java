@@ -303,12 +303,16 @@ public final class IterativeCraftingPlanner<K> {
         if (covered.compareTo(required) < 0) {
             next = new Task<>(key, required.subtract(covered), depth, null, null, next);
         }
-        Task<K> pending = new Task<>(key, covered, depth, option.pattern, option.runs, next);
         state.activate(key, true);
-        List<PatternEntry<K>> inputs = option.pattern.inputs();
-        for (int i = inputs.size() - 1; i >= 0; i--) {
+        // A self-feeding input is produced by the pattern it feeds, so it has to be claimed after that
+        // pattern has run. Every other input is wrapped into the head of the chain, where it would be
+        // drawn before the pattern could create it and the cycle guard would refuse the whole plan.
+        List<PatternEntry<K>> outside = new ArrayList<>();
+        List<UfoAmount> outsideDraws = new ArrayList<>();
+        List<UfoAmount> feedingDraws = new ArrayList<>();
+        UfoAmount selfConsumedPerRun = UfoAmount.ZERO;
+        for (PatternEntry<K> input : option.pattern.inputs()) {
             budget.operation(depth);
-            PatternEntry<K> input = inputs.get(i);
             if (input.reusable()) {
                 // A catalyst must be on hand but is handed back, so it is never consumed and no
                 // demand is propagated for it. It is checked once, when the pattern is expanded, so a
@@ -320,9 +324,36 @@ public final class IterativeCraftingPlanner<K> {
             UfoAmount drawn = input.durable()
                     ? multiply(input.amount(), ceil(option.runs, UfoAmount.of(input.uses())))
                     : multiply(input.amount(), option.runs);
-            pending = new Task<>(input.key(), drawn, depth + 1, null, null, pending);
+            if (input.key().equals(key)) {
+                selfConsumedPerRun = selfConsumedPerRun.add(input.amount());
+                feedingDraws.add(drawn);
+            } else {
+                outside.add(input);
+                outsideDraws.add(drawn);
+            }
         }
-        return pending;
+        if (!feedingDraws.isEmpty()) {
+            // The loop needs a seed to start, and the caller already took whatever stock there was.
+            // One seed is enough to reach any amount, so a shortage is the seed rather than the
+            // request. It is also modelled as available: the balance contract assumes a reported
+            // shortage is supplied, and unlike a consumed input a seed is not used up, so the residue
+            // it leaves has to appear in the plan.
+            UfoAmount seed = state.extracted.getOrDefault(key, UfoAmount.ZERO);
+            UfoAmount shortfall = selfConsumedPerRun.subtractClamped(seed);
+            if (!shortfall.isZero()) {
+                state.add(state.missing, key, shortfall);
+                state.add(state.crafted, key, shortfall);
+            }
+        }
+        Task<K> chained = next;
+        for (int i = feedingDraws.size() - 1; i >= 0; i--) {
+            chained = new Task<>(key, feedingDraws.get(i), depth + 1, null, null, chained);
+        }
+        Task<K> head = new Task<>(key, covered, depth, option.pattern, option.runs, chained);
+        for (int i = outside.size() - 1; i >= 0; i--) {
+            head = new Task<>(outside.get(i).key(), outsideDraws.get(i), depth + 1, null, null, head);
+        }
+        return head;
     }
 
     private List<Candidate<K>> candidates(ImmutableCraftingGraph<K> graph, K key, UfoAmount required,
@@ -331,7 +362,26 @@ public final class IterativeCraftingPlanner<K> {
         ArrayList<Candidate<K>> options = new ArrayList<>();
         for (CompiledPattern<K> pattern : graph.compiledPatternsFor(key)) {
             budget.operation(0);
-            UfoAmount runs = ceil(required, pattern.outputAmount(key));
+            // A pattern that feeds itself only closes when it produces more than it consumes: that is
+            // a growth step, and the material it needs is the seed it also makes. Refusing it, as the
+            // cycle guard did, discarded the family outright.
+            UfoAmount selfConsumed = UfoAmount.ZERO;
+            UfoAmount selfProduced = UfoAmount.ZERO;
+            for (PatternEntry<K> entry : pattern.inputs()) {
+                if (entry.key().equals(key) && !entry.reusable()) {
+                    selfConsumed = selfConsumed.add(entry.amount());
+                }
+            }
+            for (PatternEntry<K> entry : pattern.outputs()) {
+                if (entry.key().equals(key)) selfProduced = selfProduced.add(entry.amount());
+            }
+            BigInteger selfNet = selfProduced.subtract(selfConsumed).asBigInteger();
+            boolean growth = !selfConsumed.isZero() && selfNet.signum() > 0;
+            // The caller already took the seed from stock, so it is not subtracted again: each run
+            // adds the net, and the runs needed are the ceiling of what is still missing over it.
+            UfoAmount runs = growth
+                    ? UfoAmount.of(required.asBigInteger().add(selfNet).subtract(BigInteger.ONE).divide(selfNet))
+                    : ceil(required, pattern.outputAmount(key));
             UfoAmount capacity = runs;
             BigInteger deficit = BigInteger.ZERO;
             BigInteger inputCost = BigInteger.ZERO;
@@ -357,8 +407,9 @@ public final class IterativeCraftingPlanner<K> {
                     needed = multiply(input.amount(), runs);
                 }
                 if (state.active.contains(input.key()) && available.compareTo(needed) < 0) cycle = true;
-                // Positive self-reproduction and feedback need explicit seed semantics.
-                if (input.key().equals(key)) cycle = true;
+                // A self-feeding pattern is admitted only when it gains material; a self-loop that
+                // consumes at least as much as it makes cannot close.
+                if (input.key().equals(key) && !growth) cycle = true;
                 if (!input.reusable()) {
                     UfoAmount carriers =
                             UfoAmount.of(available.asBigInteger().divide(input.amount().asBigInteger()));

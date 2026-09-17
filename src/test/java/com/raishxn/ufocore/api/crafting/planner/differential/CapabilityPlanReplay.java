@@ -183,6 +183,10 @@ public final class CapabilityPlanReplay {
                 continue;
             }
             executedRuns = executedRuns.add(step.runs());
+            // A self-feeding pattern is funded run by run: each execution pays for the next, so the
+            // step cannot be drawn as one batch up front. Drawing it as a batch demanded a whole run
+            // count of units where only one seed is supplied.
+            String selfFed = selfFedKey(pattern);
             for (CapabilityInput input : pattern.inputs()) {
                 if (externallySatisfied(input)) continue;
                 if (presenceOnly(input)) {
@@ -200,6 +204,11 @@ public final class CapabilityPlanReplay {
                                 ? "reported shortage is insufficient for catalyst " + input.key()
                                 : "unfunded catalyst " + input.key() + " at " + pattern.id());
                     }
+                    continue;
+                }
+                if (input.key().equals(selfFed)) {
+                    fundSelfFeedingStep(input, pattern, step.runs(), crafted, consumable, injected,
+                            stockUsed, injectedUsed, failures, supplyReportedMissing);
                     continue;
                 }
                 UfoAmount need = draw(input, step.runs());
@@ -226,6 +235,8 @@ public final class CapabilityPlanReplay {
                     failures.add("probabilistic output " + output.key() + " cannot be replayed");
                     continue;
                 }
+                // The self-fed key was already netted across the whole step by the funding above.
+                if (output.key().equals(selfFed)) continue;
                 crafted.add(output.key(), output.amount().multiply(step.runs().asBigInteger()));
             }
         }
@@ -337,6 +348,66 @@ public final class CapabilityPlanReplay {
     private static boolean presenceOnly(CapabilityInput input) {
         return input.kind() == CapabilityInput.Kind.REUSABLE
                 || input.kind() == CapabilityInput.Kind.FUZZY;
+    }
+
+    /**
+     * The key a pattern feeds itself, or {@code null} when it does not. Such a step is funded run by
+     * run rather than as a batch, because each execution pays for the next.
+     */
+    private static String selfFedKey(CapabilityPattern pattern) {
+        for (CapabilityOutput output : pattern.outputs()) {
+            for (CapabilityInput input : pattern.inputs()) {
+                if (!presenceOnly(input) && !externallySatisfied(input)
+                        && input.key().equals(output.key())
+                        && output.amount().compareTo(input.amount()) > 0) {
+                    return output.key();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static UfoAmount selfProduced(CapabilityPattern pattern, String key) {
+        UfoAmount total = UfoAmount.ZERO;
+        for (CapabilityOutput output : pattern.outputs()) {
+            if (output.key().equals(key)) total = total.add(output.amount());
+        }
+        return total;
+    }
+
+    /**
+     * Funds one self-feeding step in closed form. Iterating would give the same pools, but a request
+     * of a billion runs must not become a billion iterations: one run's worth has to be on hand to
+     * start, only the part crafted cannot cover is drawn from outside and that part is the seed, and
+     * afterwards the key holds the net gain of the whole step plus the seed that was put in.
+     */
+    private static void fundSelfFeedingStep(CapabilityInput selfFeed, CapabilityPattern pattern,
+                                            UfoAmount runs, Pool crafted, Pool consumable, Pool injected,
+                                            Pool stockUsed, Pool injectedUsed, List<String> failures,
+                                            boolean supplyReportedMissing) {
+        String key = selfFeed.key();
+        UfoAmount perRunConsumed = selfFeed.amount();
+        UfoAmount onHand = crafted.get(key).add(consumable.get(key)).add(injected.get(key));
+        if (onHand.compareTo(perRunConsumed) < 0) {
+            failures.add(supplyReportedMissing
+                    ? "reported shortage is insufficient for " + key
+                    : "unfunded input " + key + " at " + pattern.id());
+            return;
+        }
+        UfoAmount seed = perRunConsumed.subtractClamped(crafted.get(key));
+        UfoAmount stillNeeded = consumable.take(key, seed);
+        UfoAmount fromStock = seed.subtract(stillNeeded);
+        if (!fromStock.isZero()) {
+            stockUsed.add(key, fromStock);
+        }
+        UfoAmount notInjected = injected.take(key, stillNeeded);
+        UfoAmount fromInjected = stillNeeded.subtract(notInjected);
+        if (!fromInjected.isZero()) {
+            injectedUsed.add(key, fromInjected);
+        }
+        UfoAmount produced = selfProduced(pattern, key).multiply(runs.asBigInteger());
+        UfoAmount consumed = perRunConsumed.multiply(runs.asBigInteger());
+        crafted.add(key, produced.subtract(consumed).add(seed));
     }
 
     /** True when an authorized external source satisfies the slot, so the plan owes nothing for it. */

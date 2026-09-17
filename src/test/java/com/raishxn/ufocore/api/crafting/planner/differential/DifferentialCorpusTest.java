@@ -42,7 +42,11 @@ class DifferentialCorpusTest {
             "batching/multi-output",
             "byproduct/shared-coproduct",
             "byproduct/feeds-later-stage",
-            "deep-chain/linear-20000");
+            "deep-chain/linear-20000",
+            // Self-growth is the one feedback family whose frontier is a closed form: the minimum is
+            // the seed that covers the shortfall of a single run, and the planner must find exactly it
+            // rather than the whole batch it would demand if it drew its own output as a normal input.
+            "cycle/self-growth");
 
     private static DifferentialHarness.Report report;
 
@@ -82,7 +86,10 @@ class DifferentialCorpusTest {
             }
         }
         assertTrue(unresolved.isEmpty(), () -> "unresolved required capabilities: " + unresolved);
-        assertEquals(39, report.supportedRequired());
+        // Was 39 before self-growth was activated. The family was previously declined because a
+        // self-feeding step was drawn as one batch, which demanded a whole run count of a material
+        // that only needs one seed; the planner now funds such a step run by run.
+        assertEquals(42, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
@@ -103,7 +110,7 @@ class DifferentialCorpusTest {
                             + entry.classification());
         }
         assertEquals(0, report.supportedLimitations());
-        assertEquals(12, report.of(CapabilityExpectation.LIMITATION).size());
+        assertEquals(9, report.of(CapabilityExpectation.LIMITATION).size());
     }
 
     @Test void everyResultIsDeterministic() {
@@ -132,9 +139,10 @@ class DifferentialCorpusTest {
         assertEquals(Set.of(CapabilityFamily.SINGLE_DAG, CapabilityFamily.MULTI_DAG,
                 CapabilityFamily.BATCHING, CapabilityFamily.BYPRODUCT, CapabilityFamily.DEEP_CHAIN,
                 CapabilityFamily.REUSABLE_CATALYST, CapabilityFamily.FINITE_DURABILITY,
-                CapabilityFamily.FUZZY_VARIANT, CapabilityFamily.EMITTER),
+                CapabilityFamily.FUZZY_VARIANT, CapabilityFamily.EMITTER,
+                CapabilityFamily.POSITIVE_FEEDBACK),
                 required);
-        assertEquals(Set.of(CapabilityFamily.CONVERSION_CYCLE, CapabilityFamily.POSITIVE_FEEDBACK,
+        assertEquals(Set.of(CapabilityFamily.CONVERSION_CYCLE,
                 CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
                 limitations);
     }

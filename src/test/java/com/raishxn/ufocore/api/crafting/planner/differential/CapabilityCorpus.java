@@ -306,7 +306,7 @@ public final class CapabilityCorpus {
                 List.of(input("A", 1)), List.of(primary("A", 2))));
         threeModes(out, "cycle/self-growth", CapabilityFamily.POSITIVE_FEEDBACK, 8, "A", UfoAmount.of(8),
                 minimum, Map.of(), List.of(amounts(Map.of("A", 1L))), true, semantics,
-                CapabilityExpectation.LIMITATION, stock -> new CapabilityGraph(patterns, consumable(stock)));
+                CapabilityExpectation.REQUIRED, stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 
     private static void addRawFeedbackLoop(List<CapabilityScenario> out) {
