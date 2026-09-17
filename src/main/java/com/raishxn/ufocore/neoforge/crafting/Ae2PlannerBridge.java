@@ -12,6 +12,7 @@ import appeng.crafting.CraftingPlan;
 import com.mojang.logging.LogUtils;
 import com.raishxn.ufocore.CoreConfig;
 import com.raishxn.ufocore.api.amount.UfoAmount;
+import com.raishxn.ufocore.api.crafting.planner.FeedbackCyclePlanner;
 import com.raishxn.ufocore.api.crafting.planner.IterativeCraftingPlanner;
 import com.raishxn.ufocore.api.crafting.planner.PlanningCancellation;
 import com.raishxn.ufocore.api.crafting.planner.PlanningLimits;
@@ -391,7 +392,11 @@ public final class Ae2PlannerBridge {
                                      long amount, CalculationStrategy strategy,
                                      long generation, CoreConfig.PlannerPolicy policy) throws TimeoutException {
         long started = System.nanoTime();
-        var full = attempt(snapshot, stock, amount, started, generation, policy);
+        // Analysed once per request rather than once per probe: the binary search below runs this many
+        // times over the same graph, and recognising a feedback loop is a pass over every pattern.
+        var loops = FeedbackCyclePlanner.analyse(snapshot.graph(), snapshot.target(),
+                UfoAmount.of(amount), stock);
+        var full = attempt(snapshot, stock, amount, started, generation, policy, loops);
         if (full.status() == PlanningResult.Status.COMPLETE) return adapt(snapshot, full);
         if (strategy == CalculationStrategy.CRAFT_LESS) {
             long successful = 0;
@@ -399,7 +404,7 @@ public final class Ae2PlannerBridge {
             for (long increment = Long.highestOneBit(amount); increment > 0; increment /= 2) {
                 if (increment >= amount - successful) continue;
                 long test = successful + increment;
-                var candidate = attempt(snapshot, stock, test, started, generation, policy);
+                var candidate = attempt(snapshot, stock, test, started, generation, policy, loops);
                 if (candidate.status() == PlanningResult.Status.COMPLETE) { successful = test; best = candidate; }
             }
             if (best != null) return adapt(snapshot, best);
@@ -409,13 +414,14 @@ public final class Ae2PlannerBridge {
 
     private PlanningResult<String> attempt(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
                                            long amount, long started, long generation,
-                                           CoreConfig.PlannerPolicy policy) throws TimeoutException {
+                                           CoreConfig.PlannerPolicy policy,
+                                           FeedbackCyclePlanner<String> loops) throws TimeoutException {
         long timeoutNanos = Duration.ofMillis(policy.timeoutMillis()).toNanos();
         long remaining = timeoutNanos - (System.nanoTime() - started);
         if (remaining <= 0) throw new TimeoutException("RaishxCore planning deadline");
         var limits = new PlanningLimits(policy.maxOperations(), policy.maxDepth(),
                 Duration.ofNanos(remaining), policy.checkpointInterval());
-        var result = new IterativeCraftingPlanner<String>().plan(snapshot.graph(),
+        var result = new IterativeCraftingPlanner<String>().plan(loops.augmentedGraph(),
                 new PlanningRequest<>(snapshot.target(), UfoAmount.of(amount), stock, limits,
                         PlanningCancellation.NEVER));
         if (statusGeneration == generation) {
@@ -423,10 +429,26 @@ public final class Ae2PlannerBridge {
             lastStatus = result.status().name();
         }
         switch (result.status()) {
-            case COMPLETE, MISSING_INGREDIENTS -> { return result; }
+            case COMPLETE, MISSING_INGREDIENTS -> { return withLoopsExpanded(loops, result); }
             case CANCELLED -> throw new java.util.concurrent.CancellationException("RaishxCore planning cancelled");
             default -> throw new TimeoutException("RaishxCore planning stopped: " + result.status());
         }
+    }
+
+    /**
+     * Rewrites a plan's feedback macro back into the patterns it stands for. Everything downstream of
+     * here — the adapted plan an AE2 commit walks, the reported leftovers — has to see the real
+     * patterns, because that is what the world runs.
+     */
+    private static PlanningResult<String> withLoopsExpanded(FeedbackCyclePlanner<String> loops,
+                                                           PlanningResult<String> result) {
+        if (!loops.applies()) {
+            return result;
+        }
+        com.raishxn.ufocore.api.crafting.planner.CraftingPlan<String> expanded =
+                loops.expand(result.plan());
+        return expanded == result.plan() ? result
+                : new PlanningResult<>(result.status(), expanded, result.diagnostics());
     }
 
     static CraftingPlan adapt(Ae2PlanningSnapshot snapshot, PlanningResult<String> result) {
