@@ -97,9 +97,11 @@ para `SUPPORTED` com `missingOverhead` 1,000.
 
 Um subproduto continua não sendo rota selecionável, seguindo `Ae2PlanningSnapshot`,
 que captura `craftableOutputs = Set.of(primary)`: nada que pergunte o que uma
-receita fabrica passa a enxergá-lo como rota. Mas ele agora é **planejável**: disparar
-a receita pelo primário é o que o produz, e quando o primário não é desejado por si
-só esse é o único caminho. `byproduct/surplus-secondary-demand` fixa a diferença —
+receita fabrica passa a enxergá-lo como rota. Mas ele agora é **planejável e concorrente**: disparar
+a receita pelo primário é o que o produz, e a rota secundária compete com as que declaram a chave —
+a comparação já precifica os disparos extras e o primário que sai junto, então vence a mais barata,
+seja ela qual for. Antes ela só era consultada quando nada declarava a chave, e uma receita que rendia
+nove unidades por disparo perdia para qualquer receita que nomeasse a chave, por mais cara que fosse. `byproduct/surplus-secondary-demand` fixa a diferença —
 quatro de um secundário contra um do primário obriga a disparar o produtor três vezes
 mais. Antes o motor reportava os três secundários como faltantes, nomeando uma chave
 que ninguém pode comprar; agora reporta o insumo do primário, que é o que de fato

@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-25 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 75 cases.
+26 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 78 cases.
 
-Representable today and therefore `REQUIRED`, 75 cases:
+Representable today and therefore `REQUIRED`, 78 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -92,6 +92,7 @@ Representable today and therefore `REQUIRED`, 75 cases:
 | `byproduct/shared-coproduct` | one coproduct produced by two routes |
 | `byproduct/feeds-later-stage` | coproduct consumed by a later stage |
 | `byproduct/surplus-secondary-demand` | more secondary wanted than the primary induces |
+| `byproduct/secondary-outbids-declared` | a secondary route that is cheaper than the declared one |
 | `deep-chain/linear-20000` | 20 000-deep chain, no stack growth |
 | `cycle/conversion-ring` | a ring of conversions, priced by the cycle guard |
 | `cycle/self-growth` | a step that feeds itself, funded one seed at a time |
@@ -200,6 +201,7 @@ overhead above one on a required case. They are printed so they cannot be overlo
 
 | Cases | Was | Cause and fix |
 | --- | --- | --- |
+| `byproduct/secondary-outbids-declared/{minimum,unbounded}` | `FALSE_NEGATIVE` | A secondary output was consulted only when nothing declared the key, so a recipe making nine of it from one scrap lost to a recipe naming it from five ore, and the report asked for the ore. Secondary routes now compete with declared ones and the comparison prices the extra firings and the primary that comes along. Restoring the old behaviour fails this case at an overhead of `5.0`. |
 | `durability/reuse-across-expansions/{minimum,missing,unbounded}` | `FALSE_NEGATIVE` and `FALSE_POSITIVE` | A durable carrier budget was drawn at each expansion of a recipe rather than across the plan. Chasing a secondary output expands the same recipe twice, so the two ceilings of one and three firings charged three carriers where a carrier lasting two firings covers all four. The planner now draws the budget per pattern and the oracle does the same; the oracle had been internally inconsistent, using the total in its balance pass and per step in its ordered replay. |
 | `multi-dag/weighted-leaf-cost/missing` | `missingOverhead` 10.0 | The route comparison runs before the shortage comparison, and it counted leaf demand in bare units, so ten cheap units lost to one valuable unit and the declared weight was never consulted. Leaf keys are now priced at their declared weight, which puts the whole pass in the same currency as the shortage. |
 | `catalyst/secondary-through-catalyst/missing` | `missingOverhead` 1.200 | A catalyst was charged once per *expansion* of its recipe rather than once per plan. Chasing a secondary output separately from the primary expands the same recipe twice, so the presence check ran twice and demanded two catalysts when one is handed back and covers both. `State` now records the working stock already demanded and charges only the decay again. |
@@ -217,6 +219,13 @@ reproducing fails it too. `DifferentialHarnessGateTest` covers every branch of t
 A secondary output is still not a selectable route: `Ae2PlanningSnapshot` declares
 `craftableOutputs = Set.of(primary)`, so nothing that asks what a recipe makes starts seeing a
 secondary as one, and `ImmutableCraftingGraph.patternsFor` keeps returning nothing for it.
+
+It is a route for planning, though, and it competes rather than waiting for nothing else to declare
+the key. `byproduct/secondary-outbids-declared` is the case that says so: a recipe declaring the key
+from five ore, and a recipe making nine of it as a secondary from one scrap. Consulted only when
+nothing declared the key, the expensive route was taken and the request reported five ore short while
+a single scrap would have covered it. Restoring that behaviour makes the case fail at an overhead of
+`5.0` and two false negatives, which is what makes it worth keeping.
 
 It is nevertheless obtainable, because firing the recipe for its primary yields it, and when the
 primary is not wanted for its own sake that is the only way. `byproduct/surplus-secondary-demand`
@@ -241,7 +250,7 @@ why the assertions are on deterministic invariants and the benchmark gates the n
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 25 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 26 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.

@@ -72,6 +72,7 @@ public final class CapabilityCorpus {
         addSecondaryThroughCatalyst(scenarios);
         addDurabilityAcrossExpansions(scenarios);
         addCatalystWithCarrier(scenarios);
+        addSecondaryOutbidsDeclared(scenarios);
         addFuzzyWithSecondary(scenarios);
         addWeightedShortage(scenarios);
         addWeightedLeafCost(scenarios);
@@ -333,6 +334,30 @@ public final class CapabilityCorpus {
      * this is where the two sharing rules meet: the catalyst is present once, while the tool budget is
      * divided by the total firings.
      */
+    /**
+     * A key that a recipe declares, and a recipe that makes nine of it per firing as a secondary. The
+     * declared route needs five ore; the secondary needs one scrap and comes out alongside dust. A
+     * secondary output used to be consulted only when nothing declared the key, so the expensive route
+     * was taken and the request was reported short while a single scrap would have covered it.
+     */
+    private static void addSecondaryOutbidsDeclared(List<CapabilityScenario> out) {
+        Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
+                CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.MULTI_ROUTE);
+        Map<String, UfoAmount> minimum = amounts(Map.of("scrap", 1L));
+        threeModes(out, "byproduct/secondary-outbids-declared", CapabilityFamily.BYPRODUCT, 9, "widget",
+                UfoAmount.ONE, minimum, Map.of(), List.of(amounts(Map.of("scrap", 1L))), true,
+                semantics, CapabilityExpectation.REQUIRED, CapabilityCorpus::secondaryOutbidsDeclared);
+    }
+
+    private static CapabilityGraph secondaryOutbidsDeclared(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("widget-declared", List.of(input("ore", 5)),
+                        List.of(primary("widget", 1))),
+                CapabilityPattern.of("widget-by-secondary", List.of(input("scrap", 1)),
+                        List.of(primary("dust", 1), byproduct("widget", 9))));
+        return graph(patterns, stock);
+    }
+
     private static void addCatalystWithCarrier(List<CapabilityScenario> out) {
         Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
                 CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.REUSABLE_INPUT,

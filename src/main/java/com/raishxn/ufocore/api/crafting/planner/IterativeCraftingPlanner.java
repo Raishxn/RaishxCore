@@ -27,10 +27,11 @@ import java.util.function.LongSupplier;
  * with the smaller total leaf demand, computed bottom-up once per plan, so a correct plan is not
  * several times more expensive than it has to be. That is a preference, not a proof: the first
  * feasible plan is still returned, and general multi-route optimality under shared stock is not
- * claimed. Quantities are batched. A key no recipe declares as something it makes is still planned
- * when a recipe yields it as a secondary output, since firing that recipe for its primary is the only
- * way to obtain it and naming the secondary as missing would name a key nobody can supply; a
- * secondary is never preferred over a declared route. Stateful feedback/catalyst optimization
+ * claimed. Quantities are batched. A recipe that yields a key as a secondary output is a route to that
+ * key like any other, so it competes with the recipes that declare it: the extra firings and the
+ * primary that comes out alongside are priced by the same comparison, and the cheapest route wins
+ * whichever kind it is. Naming a secondary as missing without considering the recipe that makes it
+ * would name a key nobody can supply. Stateful feedback/catalyst optimization
  * belongs to a separate adapter, and is one: see {@link FeedbackCyclePlanner}, which states a
  * recycling loop as a decaying catalyst this planner can balance and rewrites the plan back to the
  * real patterns. That adapter composes with this one rather than being built into it, so a caller
@@ -443,12 +444,17 @@ public final class IterativeCraftingPlanner<K> {
                                           Map<K, BigInteger> leafCosts, Budget budget) {
         ArrayList<Candidate<K>> options = new ArrayList<>();
         List<CompiledPattern<K>> routes = graph.compiledPatternsFor(key);
-        if (routes.isEmpty()) {
-            // Nothing declares this key as something it makes. That is not the same as nothing being
-            // able to make it: a secondary product comes out of whatever makes its primary, so a
-            // shortage reported here would be a shortage of a key no one can buy rather than of the
-            // material that actually has to be supplied.
-            routes = graph.secondaryRoutesFor(key);
+        // A secondary output is a way to obtain the key, not a lesser kind of way, so it competes. It
+        // used to be consulted only when nothing declared the key at all, which meant a recipe yielding
+        // nine of it per firing lost to any recipe that named it, however expensive. The comparison
+        // below already prices the extra firings and the primary that comes out alongside, so the
+        // recipe that is actually cheapest wins. The list is built only when there is something to add.
+        List<CompiledPattern<K>> secondary = graph.secondaryRoutesFor(key);
+        if (!secondary.isEmpty()) {
+            ArrayList<CompiledPattern<K>> both = new ArrayList<>(routes.size() + secondary.size());
+            both.addAll(routes);
+            both.addAll(secondary);
+            routes = both;
         }
         for (CompiledPattern<K> pattern : routes) {
             budget.operation(0);
