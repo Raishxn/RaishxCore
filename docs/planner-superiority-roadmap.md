@@ -29,7 +29,8 @@ São proibidas comparações que:
 - quantidades `UfoAmount` baseadas em `BigInteger`, sem teto artificial de
   `long` no modelo matemático;
 - planner iterativo, sem estouro de stack em cadeia com profundidade 20.000;
-- batching exato, múltiplos outputs e subprodutos determinísticos básicos;
+- batching exato, múltiplos outputs e subprodutos determinísticos quando o subproduto é resolvido
+  depois da rota que o produz (ver a limitação de ordenação em 2.2);
 - replay de conservação em testes e benchmarks;
 - snapshots imutáveis e cacheados por revisão da grid;
 - deduplicação de requisições equivalentes em andamento;
@@ -58,6 +59,13 @@ global todos os conflitos de múltiplas rotas, ciclos, ferramentas reutilizávei
 e estoques compartilhados. A captura do grafo alcançável ainda é monolítica no
 server thread e pode consumir até o orçamento configurado antes do trabalho
 assíncrono começar.
+
+O corpus diferencial de 2026-09-16 (`docs/planner-differential-corpus.md`)
+confirmou uma falha concreta nessa fronteira: um subproduto exigido é resolvido
+antes da rota irmã que o produz. Um composto cujo coproduto ordena antes das
+chaves primárias recebe um faltante impossível em vez de executar a rota
+produtora primeiro. Os quatro casos afetados ficam registrados como defeito
+confirmado no harness e nunca são contados como suporte.
 
 ### 2.3 Baseline do Thunderbolt V2 a superar
 
@@ -467,6 +475,17 @@ Cada cenário roda em `MISSING`, `MINIMUM` e `UNBOUNDED`, salvo exceções
 formalmente documentadas. A execução deve passar pela API de produção dos dois
 planners.
 
+Estado em 2026-09-16: a especificação independente existe em
+`src/test/java/com/raishxn/ufocore/api/crafting/planner/differential` e cobre 17
+grupos × 3 modos. As três primeiras capacidades de 10.1 (DAG disperso, DAG
+Fibonacci profundo, multi-DAG com armadilha gulosa) retornam `SUPPORTED` pelo
+caminho de produção do RaishxCore; catalisador, durabilidade, fuzzy, ciclos e
+feedback são recusados na admissão, antes de planejar. O adapter do Thunderbolt e
+o ambiente congelado ainda não existem. Desvios de escala adotados neste recorte
+(8 conflitos na armadilha gulosa, cadeia de 20 000 e uma testemunha mínima na
+Fibonacci multi-rota) estão documentados no mesmo arquivo e não podem ser
+apresentados como resultado da suíte de referência.
+
 ### 10.2 Corpus adicional Raishx
 
 Adicionar pelo menos:
@@ -638,6 +657,12 @@ NBT ou referências à grid após lifecycle.
 
 ### Gate P — paridade
 
+Estado em 2026-09-16: corpus neutro, oráculo de replay, runner de produção,
+taxonomia e gate de CI concluídos; medidos apenas no RaishxCore (23/27
+capacidades obrigatórias suportadas, 24 casos de limitação recusados na
+admissão, 4 casos com defeito confirmado). Nenhuma comparação com o Thunderbolt
+foi executada, portanto nenhuma afirmação de paridade é feita.
+
 - [ ] 33/33 casos Thunderbolt `SUPPORTED` no RaishxCore.
 - [ ] Zero falso positivo, erro ou timeout não cooperativo.
 - [ ] Replay e determinismo aprovados.
@@ -685,11 +710,29 @@ comprovada”. Antes disso, a documentação deve usar “em desenvolvimento”,
 
 ### R2.1 — especificação e harness
 
-- congelar corpus Thunderbolt, corpus AE2-VM e adapters diferenciais;
-- criar replay/oráculo comum;
-- ampliar status e diagnóstico;
-- produzir relatório baseline dos quatro planners: RaishxCore, Thunderbolt V2,
-  AE2-VM e AE2 original.
+Concluído e verificado neste recorte (`docs/planner-differential-corpus.md`):
+
+- [x] representação neutra de cenários de capacidade, com todos os tipos de
+      input/output/estoque previstos e `BigInteger` ponta a ponta;
+- [x] corpus independente de 17 grupos × 3 modos, recriado como especificação
+      comportamental sem importar classes de produção de outro planner;
+- [x] replay/oráculo comum: conservação por recurso, estoque não negativo,
+      execuções inteiras e não negativas, produção da quantidade pedida,
+      validade dos faltantes, sobreprodução, subprodutos e determinismo;
+- [x] runner pelo caminho público de produção, com deadline rígido e separação
+      entre timeout cooperativo e não cooperativo;
+- [x] taxonomia de oito classificações mantidas em colunas separadas;
+- [x] harness determinístico e gate de CI (`./gradlew plannerDifferential`), com
+      teste que detecta propositalmente um plano inválido;
+
+Pendente no R2.1:
+
+- [ ] congelar o corpus AE2-VM e escrever os adapters diferenciais de Thunderbolt
+      V2 e AE2 atrás do mesmo contrato;
+- [ ] produzir o relatório baseline dos quatro planners: RaishxCore,
+      Thunderbolt V2, AE2-VM e AE2 original;
+- [ ] corpus adicional do Raishx descrito em 10.2;
+- [ ] corrigir o defeito de ordenação de coproduto registrado em 2.2.
 
 ### R2.2 — captura cooperativa
 

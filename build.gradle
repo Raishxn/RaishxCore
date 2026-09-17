@@ -127,6 +127,17 @@ tasks.register('plannerComparison', JavaExec) {
     jvmArgs '-Xms256m', '-Xmx1g'
 }
 
+// Differential capability corpus: runs the frozen semantic scenarios through the planner's
+// production entry point and fails on a false positive, a defect or a non-deterministic result.
+tasks.register('plannerDifferential', JavaExec) {
+    group = 'verification'
+    description = 'Runs the differential capability corpus through the production planner path.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.raishxn.ufocore.api.crafting.planner.differential.DifferentialHarness'
+    args layout.buildDirectory.file('reports/planner/differential.txt').get().asFile.absolutePath
+    jvmArgs '-Xms256m', '-Xmx1g'
+}
+
 def generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
     def replaceProperties = [
             minecraft_version_range: minecraft_version_range,

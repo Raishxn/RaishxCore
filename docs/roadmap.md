@@ -44,11 +44,20 @@ performance.
       (request, deduplication, cancellation, worker and queue counters are complete).
 - [ ] Test several grids and requests concurrently.
 - [ ] Make the benchmark a regression gate.
+- [x] Add a neutral capability corpus, a common replay oracle, a production-path runner, the
+      eight-way classification taxonomy and a deterministic CI gate (`plannerDifferential`,
+      `docs/planner-differential-corpus.md`).
+- [x] Classify the RaishxCore baseline alone: 23/27 required cases supported, 24 declared limitation
+      cases refused at admission, 4 cases recorded as confirmed defects.
 - [ ] Run one differential capability/performance corpus against AE2 and
       Thunderbolt V2 before making comparative performance or quality claims;
-      include AE2-VM as the specialized deep-chain/JIT baseline.
+      include AE2-VM as the specialized deep-chain/JIT baseline
+      (the corpus, oracle and gate exist; only the RaishxCore side runs today).
 - [ ] Reproduce the Thunderbolt 11-group/33-case reference suite through both
-      planners' production entry points, including replay and material modes.
+      planners' production entry points, including replay and material modes
+      (recreated as an independent 17-group/51-case specification; no reference adapter yet).
+- [ ] Fix the coproduct-ordering false negative found by the corpus: a demanded byproduct is
+      resolved before the sibling route that produces it.
 - [ ] Model alternatives/fuzzy inputs, remainders, catalysts, finite
       durability, emitters, probabilistic outputs and feedback SCCs explicitly.
 - [ ] Add a bounded global integer solver for multi-route conflicts while
