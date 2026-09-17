@@ -20,9 +20,10 @@ import java.util.function.Function;
  * suite's own results:
  *
  * <ul>
- *   <li>the multi-route greedy trap uses {@value #GREEDY_TRAP_GROUPS} independent conflicts instead
- *       of the reference scale of 32, because the current planner's bounded local backtracking makes
- *       the full-scale case an operation-budget question rather than a semantic one;</li>
+ *   <li>the multi-route greedy trap runs at the reference scale, {@value #GREEDY_TRAP_GROUPS}
+ *       independent conflicts. It was held at eight while the bounded local backtracking made the
+ *       full-scale case read as a budget question; it is not one, and the deviation is withdrawn
+ *       rather than kept as a caveat that no longer applies;</li>
  *   <li>the deep single-route chain uses {@value #DEEP_CHAIN_DEPTH} instead of the reference depth
  *       used for its own suite;</li>
  *   <li>the multi-route Fibonacci case keeps one minimum witness instead of the exponential
@@ -36,7 +37,7 @@ public final class CapabilityCorpus {
 
     public static final int SINGLE_DAG_DEPTH = 32;
     public static final int MULTI_DAG_DEPTH = 12;
-    public static final int GREEDY_TRAP_GROUPS = 8;
+    public static final int GREEDY_TRAP_GROUPS = 32;
     public static final int DEEP_CHAIN_DEPTH = 20_000;
 
     private static final Set<CapabilitySemantics> DAG =

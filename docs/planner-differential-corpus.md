@@ -85,7 +85,7 @@ Representable today and therefore `REQUIRED`, 57 cases:
 | `single-dag/fibonacci-depth32` | deep one-route Fibonacci with `BigInteger` demand |
 | `multi-dag/sibling-routes` | two viable routes with a shared material and two minimum witnesses |
 | `multi-dag/fibonacci-depth12` | two routes per level, the frontier is minimal |
-| `multi-dag/greedy-trap` | route ordering trap, 8 independent conflicts |
+| `multi-dag/greedy-trap` | route ordering trap at the reference scale of 32 conflicts |
 | `batching/multi-output` | whole-batch rounding with a deterministic coproduct |
 | `byproduct/shared-coproduct` | one coproduct produced by two routes |
 | `byproduct/feeds-later-stage` | coproduct consumed by a later stage |
@@ -125,14 +125,23 @@ nothing.
 
 These must never be presented as the reference suite's own results:
 
-- the greedy trap uses 8 independent conflicts instead of the reference scale of 32, because at the
-  current scale the case is an operation-budget question rather than a semantic one;
 - the deep chain uses 20 000 instead of the reference depth for its own suite;
 - one minimum witness is retained for the multi-route Fibonacci frontier instead of the exponential
   frontier, so its `missingOverhead` ratio is a lower bound and not a claim about the true frontier;
 - the reference suite's `PARTIALLY_SUPPORTED` and `UNKNOWN` outcomes are represented as
   `SUPPORTED` with a recorded `missingOverhead` greater than one, because the required taxonomy has
   exactly eight classes.
+
+## Scale
+
+The greedy trap runs at the reference suite's own scale, 32 independent conflicts, and resolves in
+about 12 ms on the hardest material mode with the frontier exactly the 32 witnesses. The deviation
+that held it at eight is withdrawn: it rested on the assumption that the full-scale case was an
+operation-budget question, and it is not one. Doubling the scale to 64 also resolves, at 28 ms and 129
+executions, so the reference scale sits well inside the budget rather than at its edge.
+
+That matters for a reason beyond the number: a case held at a fraction of the reference scale cannot
+be presented as parity with it, and the caveat was doing the work of a measurement.
 
 ## Gate
 
