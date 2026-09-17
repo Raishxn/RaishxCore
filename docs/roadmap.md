@@ -43,7 +43,9 @@ performance.
       bounded slice/tick histograms with p50/p95/p99, per-phase accumulators, and the
       `plannerCaptureSlices` harness that gates the deterministic bounds and reports the
       measured percentiles. The 2 ms target is measured under a simulated per-pattern
-      cost (p95 0.8 ms up to 10 000 patterns in one key) and is still unconfirmed in game.
+      cost (p95 0.8 ms up to 10 000 patterns in one key) and in game the histograms already
+      separate a cold first capture (2-4 ms per slice, class loading and JIT) from a warm one
+      (~0.3 ms per slice); a large live grid is still needed to confirm the target.
 - [x] Deduplicate equivalent in-flight requests with independent caller futures.
 - [x] Cancel obsolete work on graph revision, grid unload/change, logout,
       planner disablement and server stop.
@@ -53,7 +55,10 @@ performance.
       (request, deduplication, cancellation, worker, queue and capture counters, capture
       slice/tick histograms and per-phase timings are complete; there is no external metrics
       exporter yet).
-- [ ] Test several grids and requests concurrently.
+- [x] Test several grids and requests concurrently: three real AE2 grids contended for one
+      shared tick budget in a soak with a deliberately slow provider registered first, all
+      planned exactly by the Core with no starvation, backpressure or circuit-breaker
+      contamination; a long soak with a real save stays in the release gate.
 - [ ] Make the benchmark a regression gate.
 - [x] Add a neutral capability corpus, a common replay oracle, a production-path runner, the
       eight-way classification taxonomy and a deterministic CI gate (`plannerDifferential`,

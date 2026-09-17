@@ -131,6 +131,35 @@ How to read this table:
   **not** measure a live AE2 grid, and the 2 ms target in game is therefore still unverified
   - what changed is that it is now observable, through the same histograms the harness reads.
 
+### In game
+
+`PlannerCaptureSoakGameTests` measures the same histograms against real AE2 grids. It captures two
+targets on one grid and logs each reading separately, because the first capture in a process pays
+class loading and JIT for the whole adapter path:
+
+| reading | slices | slice p50 (cumulative) | key phase | pattern phase | publish phase |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| after the first capture (cold) | 2 | 4.0 ms | 0.53 ms | 2.66 ms | 2.16 ms |
+| after a second target (warm) | +2 | 0.8 ms | +0.06 ms | +0.40 ms | +0.08 ms |
+
+The cold reading is what one 2-key grid costs while the code is still being compiled; the warm
+second capture settles at a few hundred microseconds per slice, and the publish step at tens of
+microseconds. Two captures are not a percentile, and a two-key grid says nothing about a large one:
+**the 2 ms target needs a session on a real server with a large grid**, and the per-phase
+accumulators are the instrument for it. What the test does establish is that the metric is live in
+game, that a cold first capture must not be mistaken for a regression, and that nothing pathological
+happens at game scale.
+
+### Multi-grid soak with a slow neighbour
+
+The same file runs three real grids competing for one shared tick budget, with the slow grid
+registered first so that a pump which stopped at the first exhausted budget would starve the other
+two. The slow provider burns 4 ms - more than the whole tick budget - inside one `getPatternPriority`
+call, which is a slice's atomic tail. Observed: 15 slices over 8 ticks for the three captures, five
+slow calls, every request planned exactly by the Core, no capture left pending, no backpressure
+rejection and no circuit rejection on any grid. The overrun is charged to the shared budget in full,
+the other grids simply wait for the next tick, and the rotation is what guarantees they are served.
+
 ## Fallback policy
 
 Falling back is never counted as a RaishxCore success, and it never mixes two engines in
@@ -209,6 +238,8 @@ one batch per scenario so grid and config state cannot race):
 - `aKeyWithSeveralRoutesIsCapturedAcrossSeveralSlices` — three routes for one product with
   `sliceEdges = 1`: the capture needs at least four slices rather than the two a key-granular
   slice would use, all three patterns arrive in the graph, and the plan is still exact.
+- `threeGridsWithOneSlowProviderAllFinish` — the multi-grid soak described above.
+- `aRealGridReportsItsSlicePercentiles` — the cold/warm in-game readings above.
 
 ## Limits of this slice (not implemented, not measured)
 
@@ -227,9 +258,12 @@ one batch per scenario so grid and config state cannot race):
 - **The tick budget and the worker pool are fixed at first use.** Changing
   `snapshot.tickBudgetMillis` or worker settings requires a restart, as with the existing
   pool settings.
-- **No multi-grid soak with real grids or a hostile engine.** Round-robin fairness, the
-  absence of starvation and the shared-budget arithmetic are covered by the harness and unit
-  tests; a soak with several real grids, and a grid whose adapter call blocks, are not.
+- **No long soak with a real save.** The multi-grid soak above lives in a GameTest with three
+  grids and a few ticks; a long run against a real world, with many players and grids coming and
+  going, belongs to Gate R.
+- **A blocking adapter call is contained, not preempted.** A provider that blocks inside a slice
+  holds the server thread for that call; the capture charges the overrun and keeps the other grids
+  on their rotation, but it cannot shorten the call itself.
 - **The corpus does not cover capture behaviour.** `plannerDifferential` still measures the
   planner, not the capture; the capture guarantees live in unit tests and GameTests.
 - **The deferred path is not benchmarked.** `plannerBenchmark` exercises the planner API
@@ -240,8 +274,8 @@ one batch per scenario so grid and config state cannot race):
 ## Next steps
 
 1. Confirm the slice p95 in game through the diagnostics histograms, on a grid with many
-   patterns for one item.
-2. Add a soak with several real grids and one deliberately slow provider, which is what the
-   remaining half of the second Gate O item asks for.
+   patterns for one item, and record the session in the roadmap.
+2. Reload the shared tick budget without a restart, which is the last configuration item R2.2
+   leaves open.
 3. Continue R2.1 with the Thunderbolt V2 and AE2-VM adapters and the frozen-environment
    report, so the capture work can be measured in the differential corpus too.

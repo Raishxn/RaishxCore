@@ -727,11 +727,17 @@ e o soak com grids reais continua pendente.
       chave (bound determinístico verificado por unit test e pelo harness).
 - [ ] Fatia p95 ≤ 2 ms por grid/tick confirmada em jogo: com 20 µs simulados por
       chamada de grid, o p95 medido pelo harness ficou em 0,8 ms de uma chave com
-      1 até 10 000 padrões, e o p95 do próprio maquinário ficou em 0,2 ms; o
-      número ao vivo ainda depende de uma sessão com grid real.
-- [ ] Multi-grid não apresenta starvation nem contaminação de circuit breaker
-      (rodízio implementado; rodízio e ausência de starvation cobertos por unit
-      tests, harness e GameTests; soak com grids reais pendente).
+      1 até 10 000 padrões, e o p95 do próprio maquinário ficou em 0,2 ms. Em jogo
+      os histogramas já medem: a primeira captura de um processo custa 2-4 ms por
+      fatia (class loading e JIT, fase de padrão 2,66 ms e publicação 2,16 ms numa
+      grid de duas chaves) e a segunda, já quente, cai para ~0,3 ms por fatia com
+      p50 de 0,8 ms. Falta uma sessão real com grid grande para confirmar o alvo.
+- [x] Multi-grid não apresenta starvation nem contaminação de circuit breaker:
+      o soak com três grids AE2 reais disputando um orçamento por tick, uma delas
+      com provedor que queima 4 ms dentro de uma única chamada de adapter, fecha
+      com 15 fatias em 8 ticks, todas as requisições planejadas pelo Core, nenhuma
+      captura pendente, nenhum backpressure e nenhum circuit breaker disparado em
+      nenhuma grid (o soak longo com save real entra no Gate R).
 - [x] Cancelamento/lifecycle em todas as fases da captura e do planejamento
       (sessões multi-engine entram no R2.7).
 - [ ] Engine não cooperativo isolado sem bloquear AE2 ou nova grid.
@@ -826,11 +832,20 @@ Concluído no segundo recorte do R2.2:
 - [x] GameTest que prova, numa grid AE2 real, que uma chave com três rotas é
       capturada em várias fatias e ainda planeja exatamente.
 
+Concluído no terceiro recorte do R2.2:
+
+- [x] soak multi-grid com grids AE2 reais e um provedor deliberadamente lento
+      (4 ms dentro de uma chamada de adapter), registrado primeiro para que um pump
+      sem rodízio deixasse as outras grids sem fatia; todas terminam, sem
+      backpressure e sem contaminação de circuit breaker;
+- [x] medir em jogo, não só em carga sintética: dois alvos na mesma grid, com a
+      leitura fria e a quente registradas separadamente, por fase (chave, padrão,
+      publicação) e com teto de fumaça de 50 ms garantido pelo teste.
+
 Pendente no R2.2:
 
-- [ ] confirmar a fatia p95 de 2 ms in-game (histogramas prontos, medição ao vivo
-      pendente);
-- [ ] soak multi-grid e grid deliberadamente hostil/lenta;
+- [ ] confirmar a fatia p95 de 2 ms in-game numa grid grande (histogramas prontos,
+      medição ao vivo pendente);
 - [ ] orçamento de tick recarregável sem reiniciar o servidor;
 - [ ] cobrir o comportamento de captura no corpus diferencial, não só em unit
       tests e GameTests.
