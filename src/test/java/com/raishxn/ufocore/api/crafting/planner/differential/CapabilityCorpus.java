@@ -66,6 +66,7 @@ public final class CapabilityCorpus {
         addCoproductFeedsLaterStage(scenarios);
         addDeepChain(scenarios);
         addConversionRing(scenarios);
+        addChanceRoute(scenarios);
         addSelfGrowth(scenarios);
         addRawFeedbackLoop(scenarios);
         addLossyFeedbackLoop(scenarios);
@@ -297,6 +298,28 @@ public final class CapabilityCorpus {
                 UfoAmount.ONE, minimum, starved,
                 List.of(amounts(Map.of("A", 1L)), amounts(Map.of("C", 1L))), false, semantics,
                 CapabilityExpectation.REQUIRED, stock -> new CapabilityGraph(patterns, consumable(stock)));
+    }
+
+    /**
+     * The target has a deterministic route and a chance route, and only {@code raw} is in stock. A
+     * planner that counts a chance output as an output answers this from {@code raw} and calls it
+     * complete; the guaranteed answer is that eight {@code ore} are missing, because a chance route
+     * promises nothing to a deterministic request.
+     */
+    private static void addChanceRoute(List<CapabilityScenario> out) {
+        Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.PROBABILISTIC_OUTPUT);
+        Map<String, UfoAmount> minimum = amounts(Map.of("raw", 8L, "ore", 8L));
+        Map<String, UfoAmount> starved = amounts(Map.of("raw", 8L));
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("gem-from-ore", List.of(input("ore", 1)),
+                        List.of(primary("gem", 1))),
+                // A recipe has to declare something it deterministically makes, so the chance route
+                // also yields dross. The gem it sometimes gives is still not a promise.
+                CapabilityPattern.of("gem-by-chance", List.of(input("raw", 1)),
+                        List.of(primary("dross", 1), CapabilityOutput.probabilistic("gem", 1))));
+        threeModes(out, "probabilistic/chance-route", CapabilityFamily.PROBABILISTIC_OUTPUT, 8, "gem",
+                UfoAmount.of(8), minimum, starved, List.of(amounts(Map.of("ore", 8L))), true, semantics,
+                CapabilityExpectation.LIMITATION, stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 
     private static void addSelfGrowth(List<CapabilityScenario> out) {

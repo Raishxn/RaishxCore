@@ -23,5 +23,6 @@ public enum CapabilityFamily {
     REUSABLE_CATALYST,
     FINITE_DURABILITY,
     FUZZY_VARIANT,
-    EMITTER
+    EMITTER,
+    PROBABILISTIC_OUTPUT
 }

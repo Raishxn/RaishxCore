@@ -19,17 +19,16 @@ class RaishxCoreCapabilityPlannerTest {
             new RaishxCoreCapabilityPlanner(Duration.ofSeconds(5));
 
     /**
-     * The corpus carried explicit limitations while the feedback and cycle families were unsafe to
-     * claim, so this asserted there was work left to refuse. There is none now, and that is the point:
-     * every family the corpus declares is claimed, and the model has to cover the semantics each one
-     * uses. The refusal loop stays because a limitation that reappears must be refused before planning
-     * rather than planned wrongly, which is the failure this test exists to catch.
+     * A declared limitation must be refused before planning rather than planned wrongly. The chance
+     * output family is the one still declared, and it is declared precisely because the wrong answer
+     * is a plausible one: treating a probabilistic output as an output answers the request from the
+     * wrong stock and reports it complete. The loop over the required families beside it keeps the
+     * other direction honest, since every semantics they use has to be one the model claims.
      */
-    @Test void everyFamilyTheCorpusDeclaresIsRepresentable() {
+    @Test void everyDeclaredLimitationIsRefusedAndEveryRequiredSemanticIsClaimed() {
         List<CapabilityScenario> limitations = CapabilityCorpus.limitations();
-        assertTrue(limitations.isEmpty(),
-                () -> "every family is claimed now, so a declared limitation is a finding: "
-                        + limitations.stream().map(CapabilityScenario::label).toList());
+        assertFalse(limitations.isEmpty(),
+                "the refusal path has no case to run on, so it is not being tested");
         for (CapabilityScenario scenario : limitations) {
             CapabilityPlanner.Check check = planner.check(scenario);
             assertFalse(check.accepted(), () -> scenario.label() + " must be refused");

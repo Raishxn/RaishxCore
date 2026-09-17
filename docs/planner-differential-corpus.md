@@ -75,37 +75,48 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-17 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 51 cases.
+18 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 54 cases.
 
-Representable today and therefore `REQUIRED`:
+Representable today and therefore `REQUIRED`, 51 cases:
 
 | Group | Cases |
 | --- | --- |
 | `single-dag/dispersed` | one-route DAG, batching, backtracking neighbour |
 | `single-dag/fibonacci-depth32` | deep one-route Fibonacci with `BigInteger` demand |
 | `multi-dag/sibling-routes` | two viable routes with a shared material and two minimum witnesses |
-| `multi-dag/fibonacci-depth12` | two routes per level, `SUPPORTED` with a non-minimal shortage |
+| `multi-dag/fibonacci-depth12` | two routes per level, the frontier is minimal |
 | `multi-dag/greedy-trap` | route ordering trap, 8 independent conflicts |
 | `batching/multi-output` | whole-batch rounding with a deterministic coproduct |
 | `byproduct/shared-coproduct` | one coproduct produced by two routes |
 | `byproduct/feeds-later-stage` | coproduct consumed by a later stage |
 | `deep-chain/linear-20000` | 20 000-deep chain, no stack growth |
+| `cycle/conversion-ring` | a ring of conversions, priced by the cycle guard |
+| `cycle/self-growth` | a step that feeds itself, funded one seed at a time |
+| `catalyst/raw-feedback-loop` | a loop that returns its catalyst in full |
+| `catalyst/lossy-feedback-loop` | a loop that loses a fixed amount per turn |
+| `catalyst/returned-seed` | a declared catalyst, present once and handed back |
+| `durability/finite-use-chain` | a carrier that survives a limited number of firings |
+| `fuzzy/variant-route` | a slot any of several variants may satisfy |
+| `emitter/authorized-stream` | an input an authorized external source supplies |
 
-Declared limitations, refused before planning because the model cannot represent them yet:
+Declared limitations, refused before planning because the model cannot represent them yet, 3 cases:
 
 | Group | Required semantics |
 | --- | --- |
-| `cycle/conversion-ring` | `CONVERSION_CYCLE` |
-| `cycle/self-growth` | `POSITIVE_FEEDBACK` |
-| `catalyst/raw-feedback-loop` | `CONSERVATIVE_FEEDBACK` |
-| `catalyst/lossy-feedback-loop` | `LOSSY_FEEDBACK` |
-| `catalyst/returned-seed` | `REUSABLE_INPUT` |
-| `durability/finite-use-chain` | `FINITE_DURABILITY` |
-| `fuzzy/variant-route` | `FUZZY_ALTERNATIVES` |
-| `emitter/authorized-stream` | `EMITTER` |
+| `probabilistic/chance-route` | `PROBABILISTIC_OUTPUT` |
+
+The chance route family is declared because the wrong answer is a plausible one rather than an
+obviously broken one: the target has both a deterministic route and a chance route, and only the
+chance route's input is in stock, so a planner that treats a probabilistic output as an output
+answers the request from the wrong material and reports it complete. The guaranteed answer is that
+every unit has to come from the deterministic route.
+
+It is the one family the reference does not answer either: its adapter declines the case outright
+rather than guessing, so this is open work for both engines rather than a gap behind one of them.
 
 A limitation is never counted as support, even when the diagnostic forced execution happens to
-replay: it is listed separately in the report.
+replay: it is listed separately in the report. The refusal loop is kept in the suite for exactly
+this family, because a family that is never refused is a refusal path that is never tested.
 
 ## Documented deviations from the reference standard
 

@@ -76,8 +76,8 @@ class DifferentialCorpusTest {
         for (DifferentialHarness.Entry entry : report.entries()) {
             modes.computeIfAbsent(entry.id(), ignored -> new LinkedHashSet<>()).add(entry.mode());
         }
-        assertEquals(17, modes.size());
-        assertEquals(51, report.entries().size());
+        assertEquals(18, modes.size());
+        assertEquals(54, report.entries().size());
         modes.forEach((id, present) -> assertEquals(Set.of(CapabilityMaterialMode.values()), present,
                 () -> id + " must run in every material mode"));
     }
@@ -112,7 +112,7 @@ class DifferentialCorpusTest {
         assertEquals(0L, counts.get(CapabilityClassification.ENGINE_ERROR), report::render);
         assertEquals(0L, counts.get(CapabilityClassification.NON_COOPERATIVE_TIMEOUT), report::render);
         assertEquals(0L, counts.get(CapabilityClassification.ENGINE_TIMEOUT), report::render);
-        assertEquals(51L, counts.values().stream().mapToLong(Long::longValue).sum());
+        assertEquals(54L, counts.values().stream().mapToLong(Long::longValue).sum());
     }
 
     @Test void declaredLimitationsAreNeverCountedAsSupport() {
@@ -124,10 +124,9 @@ class DifferentialCorpusTest {
                             + entry.classification());
         }
         assertEquals(0, report.supportedLimitations());
-        // Every family the corpus declares is claimed now, so nothing is left in this bucket. The
-        // assertion above stays: a limitation that reappears must still decline safely rather than be
-        // counted as support.
-        assertEquals(0, report.of(CapabilityExpectation.LIMITATION).size());
+        // Chance outputs are the one family still declared, and it is declared because a planner that
+        // counted them would answer probabilistic/chance-route from raw stock and call it complete.
+        assertEquals(3, report.of(CapabilityExpectation.LIMITATION).size());
     }
 
     @Test void everyResultIsDeterministic() {
@@ -160,7 +159,7 @@ class DifferentialCorpusTest {
                 CapabilityFamily.POSITIVE_FEEDBACK, CapabilityFamily.CONVERSION_CYCLE,
                 CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
                 required);
-        assertEquals(Set.of(), limitations);
+        assertEquals(Set.of(CapabilityFamily.PROBABILISTIC_OUTPUT), limitations);
     }
 
     @Test void reportContainsEveryFieldTheStandardRequires() {

@@ -243,9 +243,9 @@ to required — `required supported=45/45`, `limitation cases supported but not 
 shortage is pinned. The refill path must complete, which is what proves a reported seed is
 both necessary and sufficient.
 
-The two catalyst loops are claimed as well, so the corpus has no declared limitations left:
-`required supported=51/51 confirmed defects=0 limitation cases supported but not claimed=0/0`, with
-zero false positives and zero false negatives across all three material modes. Both are optimal on
+The chance-output family keeps the refusal loop in the suite with a real case to run on: a family
+that is never refused is a refusal path that is never tested, and the probabilistic case is the one
+where the wrong answer is plausible rather than obviously broken. Both are optimal on
 the missing mode — `overhead=1.000`, the exact witness — where the naive model would have reported
 eleven units against ten.
 
