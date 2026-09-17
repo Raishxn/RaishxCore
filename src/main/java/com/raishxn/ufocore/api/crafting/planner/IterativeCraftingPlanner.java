@@ -320,13 +320,25 @@ public final class IterativeCraftingPlanner<K> {
         // A decaying catalyst is declared twice, as a catalyst and as a consumed input. The presence
         // check below has to demand both at once, because it runs before the draws and would otherwise
         // see the whole stock and wave through a batch that eats into the catalyst it just approved.
-        Map<K, UfoAmount> consumedPerKey = new HashMap<>();
+        Map<K, UfoAmount> consumedPerKey = null;
+        boolean hasCatalyst = false;
         for (PatternEntry<K> input : option.pattern.inputs()) {
-            if (input.reusable() || input.key().equals(key)) continue;
-            UfoAmount drawn = input.durable()
-                    ? multiply(input.amount(), ceil(option.runs, UfoAmount.of(input.uses())))
-                    : multiply(input.amount(), option.runs);
-            consumedPerKey.merge(input.key(), drawn, UfoAmount::add);
+            if (input.reusable()) {
+                hasCatalyst = true;
+                break;
+            }
+        }
+        if (hasCatalyst) {
+            // Only a pattern that carries a catalyst needs this at all. Building it unconditionally
+            // charged every pattern in the graph for a map that stays empty, which showed up as bytes
+            // per operation on a case that has no catalyst in it whatsoever.
+            consumedPerKey = new HashMap<>();
+            for (PatternEntry<K> input : option.pattern.inputs()) {
+                if (input.reusable() || input.key().equals(key)) continue;
+                consumedPerKey.merge(input.key(), input.durable()
+                        ? multiply(input.amount(), ceil(option.runs, UfoAmount.of(input.uses())))
+                        : multiply(input.amount(), option.runs), UfoAmount::add);
+            }
         }
         for (PatternEntry<K> input : option.pattern.inputs()) {
             budget.operation(depth);
@@ -334,12 +346,18 @@ public final class IterativeCraftingPlanner<K> {
                 // A catalyst must be on hand but is handed back, so it is never consumed and no
                 // demand is propagated for it. It is checked once, when the pattern is expanded, so a
                 // catalyst that this same plan would craft only later still reads as missing.
-                UfoAmount alsoConsumed = consumedPerKey.getOrDefault(input.key(), UfoAmount.ZERO);
+                UfoAmount alsoConsumed = consumedPerKey == null ? UfoAmount.ZERO
+                        : consumedPerKey.getOrDefault(input.key(), UfoAmount.ZERO);
                 // Only the working stock is charged once for the whole plan; the decay is charged every
                 // time, because it really is consumed every time.
-                UfoAmount working = input.amount()
-                        .subtractClamped(state.presence.getOrDefault(input.key(), UfoAmount.ZERO));
+                // Allocated on first use: a graph with no catalyst at all must not pay for a map that
+                // would stay empty, and most graphs are that.
+                UfoAmount working = input.amount().subtractClamped(state.presence == null
+                        ? UfoAmount.ZERO : state.presence.getOrDefault(input.key(), UfoAmount.ZERO));
                 if (!working.isZero()) {
+                    if (state.presence == null) {
+                        state.presence = new HashMap<>();
+                    }
                     state.put(state.presence, input.key(), input.amount());
                 }
                 state.add(state.missing, input.key(), state.requirePresent(input.key(),
@@ -489,8 +507,7 @@ public final class IterativeCraftingPlanner<K> {
                 // computing it: the two keys are already on hand and both are needed anyway.
                 .thenComparing(option -> option.runs)
                 .thenComparing(option -> option.pattern.outputAmount(key))
-                .thenComparing(option -> option.pattern.pattern().id())
-                .thenComparing(option -> option.runs, Comparator.reverseOrder());
+                .thenComparing(option -> option.pattern.pattern().id());
         options.sort((left, right) -> { budget.operation(0); return order.compare(left, right); });
         return options;
     }
@@ -569,7 +586,7 @@ public final class IterativeCraftingPlanner<K> {
          * does when a secondary output is chased separately from the primary, must not be charged for
          * the same catalyst twice.
          */
-        final Map<K, UfoAmount> presence = new HashMap<>();
+        Map<K, UfoAmount> presence;
         final Map<CraftingPattern<K>, UfoAmount> executions = new TreeMap<>(Comparator.comparing(CraftingPattern::id));
         final Set<K> active = new HashSet<>();
         final ArrayList<CraftingPlan.Execution<K>> schedule = new ArrayList<>();

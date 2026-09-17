@@ -112,10 +112,17 @@ public final class PlannerBenchmark {
     /**
      * Compares this run against the recorded baseline.
      *
-     * <p>Allocation per operation is byte-exact and does not depend on the machine, so it is gated
-     * tightly: it catches an accidental extra copy or an eager conversion long before wall time
-     * moves. Wall time does depend on the machine and on what else the runner is doing, so it is
-     * gated loosely and only meant to catch a catastrophic regression rather than a few percent.
+     * <p>Allocation per operation is measured over a fixed sample count, so it is deterministic for a
+     * given JVM, and it is gated tightly because it catches an accidental extra copy or an eager
+     * conversion long before wall time moves. It is <em>not</em> byte-exact across machines, which an
+     * earlier version of this comment claimed: the same commit measured 21992 bytes per operation
+     * locally and 22064 in CI, because escape analysis scalarises different call sites depending on
+     * how the JIT warmed up. A threshold this tight therefore has to leave real headroom rather than
+     * sit a fraction of a percent under it, and a measurement that only just passes is a measurement
+     * that will fail on the next runner.
+     *
+     * <p>Wall time does depend on the machine and on what else the runner is doing, so it is gated
+     * loosely and only meant to catch a catastrophic regression rather than a few percent.
      */
     private static boolean gate(Map<String, Measurement> measured, boolean update) throws IOException {
         if (update) {

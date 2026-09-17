@@ -45,7 +45,9 @@ public final class ImmutableCraftingGraph<K> {
         ordered.sort(Comparator.comparing(CraftingPattern::id));
         HashSet<String> ids = new HashSet<>();
         TreeMap<K, List<CompiledPattern<K>>> index = new TreeMap<>(keyComparator);
-        TreeMap<K, List<CompiledPattern<K>>> secondary = new TreeMap<>(keyComparator);
+        // Built only when something is actually a secondary output. Every graph without one would
+        // otherwise pay for a whole extra map on every compilation, and compilation is not rare.
+        TreeMap<K, List<CompiledPattern<K>>> secondary = null;
         TreeMap<K, List<CompiledPattern<K>>> consumers = new TreeMap<>(keyComparator);
         ArrayList<CompiledPattern<K>> compiledPatterns = new ArrayList<>();
         TreeMap<K, K> uniqueKeys = new TreeMap<>(keyComparator);
@@ -69,6 +71,9 @@ public final class ImmutableCraftingGraph<K> {
                     // primary is a way to obtain it, and the only way when the primary is not wanted
                     // for its own sake. Indexed separately so nothing that asks for a selectable route
                     // starts seeing one that is not.
+                    if (secondary == null) {
+                        secondary = new TreeMap<>(keyComparator);
+                    }
                     secondary.computeIfAbsent(output.key(), ignored -> new ArrayList<>()).add(compiled);
                 }
             }
@@ -77,10 +82,12 @@ public final class ImmutableCraftingGraph<K> {
             }
         }
         index.replaceAll((key, value) -> List.copyOf(value));
-        secondary.replaceAll((key, value) -> List.copyOf(value));
+        if (secondary != null) {
+            secondary.replaceAll((key, value) -> List.copyOf(value));
+        }
         this.patterns = List.copyOf(ordered);
         this.byOutput = Collections.unmodifiableNavigableMap(index);
-        this.bySecondaryOutput = Collections.unmodifiableMap(secondary);
+        this.bySecondaryOutput = secondary == null ? Map.of() : Collections.unmodifiableMap(secondary);
         consumers.replaceAll((key, value) -> List.copyOf(value));
         this.byInput = Collections.unmodifiableMap(consumers);
         this.compiled = List.copyOf(compiledPatterns);
