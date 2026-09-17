@@ -145,9 +145,15 @@ public final class ThunderboltCapabilityPlanner implements CapabilityPlanner {
         });
         // Thunderbolt's plan carries no ordered schedule and no leftover report. The shared replay
         // oracle re-executes the schedule in order, so the adapter derives a dependency order from
-        // the declared firings. It validates Thunderbolt's quantities, not an order Thunderbolt
-        // never claimed: a plan is only accepted when its per-pattern totals still match.
-        List<CapabilityPlan.Step> schedule = synthesiseSchedule(scenario, executions);
+        // the declared firings. A cyclic graph has no such order, and inventing one would be a lie;
+        // the schedule is left empty there, which keeps the claim fields - Thunderbolt's own
+        // firings, used stock and shortage - readable while making a replay verdict impossible.
+        List<CapabilityPlan.Step> schedule;
+        try {
+            schedule = synthesiseSchedule(scenario, executions);
+        } catch (AdapterGap cyclic) {
+            schedule = List.of();
+        }
         return new CapabilityPlan(scenario.target(), scenario.amount(), executions, used, missing,
                 Map.of(), schedule, missing.isEmpty());
     }
