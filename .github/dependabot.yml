@@ -23,3 +23,12 @@ updates:
       gradle-dependencies:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # Closed as noise, not to be recreated. These move only as deliberate migrations: the
+      # Gradle wrapper and the moddev plugin change the build itself, and JUnit 6 is a major
+      # baseline that needs work, not a weekly pull request. Delete an entry when the bump is
+      # wanted back.
+      - dependency-name: "gradle-wrapper"
+      - dependency-name: "net.neoforged.moddev"
+      - dependency-name: "org.junit:junit-bom"
+        update-types: ["version-update:semver-major"]
