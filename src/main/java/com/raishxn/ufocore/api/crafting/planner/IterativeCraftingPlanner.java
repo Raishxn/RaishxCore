@@ -28,7 +28,10 @@ import java.util.function.LongSupplier;
  * several times more expensive than it has to be. That is a preference, not a proof: the first
  * feasible plan is still returned, and general multi-route optimality under shared stock is not
  * claimed. Quantities are batched. Stateful feedback/catalyst optimization belongs to a separate
- * adapter.
+ * adapter, and is one: see {@link FeedbackCyclePlanner}, which states a recycling loop as a
+ * decaying catalyst this planner can balance and rewrites the plan back to the real patterns. That
+ * adapter composes with this one rather than being built into it, so a caller that does not want it
+ * pays nothing for it.
  */
 public final class IterativeCraftingPlanner<K> {
     private final LongSupplier nanoTime;

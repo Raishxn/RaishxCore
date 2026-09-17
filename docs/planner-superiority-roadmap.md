@@ -49,19 +49,30 @@ São proibidas comparações que:
 
 ### 2.2 Limites atuais do RaishxCore
 
-O modelo público `CraftingPattern` representa mapas exatos de inputs/outputs e
-um subconjunto de outputs craftáveis. A ponte AE2 atualmente recusa:
+O modelo público `CraftingPattern` representa mapas exatos de inputs/outputs, um
+subconjunto de outputs craftáveis, catalisadores presentes-e-devolvidos,
+catalisadores que decaem por disparo, portadores de uso finito, slots fuzzy e
+inputs emitidos por fonte autorizada. A ponte AE2 ainda recusa:
 
-- substituição/fuzzy e alternativas dentro do mesmo ingrediente;
-- remainder/container retornável;
-- feedback entre input e output, incluindo catalisadores;
-- emitters (`canEmitFor`);
-- qualquer input que não tenha exatamente uma opção válida;
+- outputs probabilísticos, porque a garantia é menor que um e prometer uma saída
+  que pode não vir é pior do que recusar; a família segue declarada como limitação
+  (`probabilistic/chance-route`) e nenhum dos dois motores a responde;
 - padrões sem definição estável.
 
-O algoritmo possui backtracking local limitado, mas ainda não resolve de forma
-global todos os conflitos de múltiplas rotas, ciclos, ferramentas reutilizáveis
-e estoques compartilhados.
+O restante da lista anterior — fuzzy, remainder/container retornável, feedback
+entre input e output incluindo catalisadores, emitters e inputs com mais de uma
+opção válida — está implementado e preso pelo corpus diferencial. O feedback saiu
+como esta seção previa, num adaptador separado (`FeedbackCyclePlanner`): o
+componente é reconhecido, uma volta dele é precificada e o laço vira um
+catalisador decaente que a maquinaria de balanço já entende, com o plano
+reescrito de volta para os padrões reais, volta a volta. A ponte usa o adaptador
+uma vez por requisição.
+
+O algoritmo possui backtracking local limitado. Ciclos, ferramentas reutilizáveis
+e catalisadores deixaram de ser o problema: o que continua fora é o **ótimo
+global** de múltiplas rotas disputando estoque compartilhado, que é a Fase 4. O
+adaptador de ciclos cobre o componente de rota única e recusa o resto; não é um
+solver inteiro e não reivindica sê-lo.
 
 A captura do grafo já não é monolítica: ela roda em fatias limitadas por grid
 dentro de um orçamento compartilhado por tick, e uma captura que não termina é
@@ -324,6 +335,14 @@ do AE2 deixa o índice obsoleto.
 - identificar conflitos de alternativas, fuzzy, durabilidade e estoque host;
 - produzir motivos estruturados de `DECLINE` para semântica não provada.
 
+**Estado:** a parte de ciclos chegou, com escopo estreito. `FeedbackCyclePlanner`
+caminha da receita do alvo pela rota única de cada insumo até um padrão repetir,
+classifica a volta (conservativa, com perda ou positiva pelo sinal do saldo
+líquido), recusa qualquer coisa com escolha, bifurcação, ganho próprio ou volta
+mais rasa que o próprio decaimento, e recusa o componente de um padrão só porque
+o crescimento auto-alimentado já é nativo do planner. Não há SCC geral: o que não
+for uma volta simples de rota única continua caindo no `DECLINE` do planner base.
+
 ### Fase 3 — solução rápida para regiões simples
 
 Usar o planner iterativo atual, depois de generalizado, para regiões que forem
@@ -362,6 +381,11 @@ rota. Ordem lexicográfica de objetivos:
 Timeout do solver deve retornar o melhor plano **já validado** ou `DECLINE`;
 nunca um vetor parcial. Não misturar metade do fast path com metade de outro
 backend sem replay global final.
+
+**Estado:** não iniciado. O que existe é o adaptador de ciclos da Fase 2, que
+resolve a aritmética de um componente mas não otimiza entre rotas, e o
+backtracking local do planner iterativo. Nenhum dos dois reivindica o ótimo
+global, e o doc de classe do `IterativeCraftingPlanner` continua dizendo isso.
 
 ### Fase 5 — ciclos e feedback
 
