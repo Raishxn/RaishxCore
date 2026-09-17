@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.raishxn.ufocore.api.amount.UfoAmount;
+import java.math.BigInteger;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -240,6 +241,43 @@ class IterativeCraftingPlannerTest {
         assertEquals(amount(50), result.plan().missing().get("ore"));
         assertFalse(result.plan().missing().containsKey("flux"),
                 "the authorized source covers the flux, so it is never short");
+    }
+
+    @Test void batchingStaysExactAboveTheRangeOfALongOnTheAggregatingFastPath() {
+        BigInteger request = BigInteger.TWO.pow(70).add(BigInteger.ONE);
+        BigInteger runs = request.add(BigInteger.TWO).divide(BigInteger.valueOf(3));
+        BigInteger ingots = runs.multiply(BigInteger.TWO);
+        var recipe = pattern("plate", Map.of("ingot", amount(2)), Map.of("plate", amount(3)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", UfoAmount.of(request), Map.of("ingot", UfoAmount.of(ingots))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status(),
+                () -> "missing=" + result.plan().missing());
+        // A three-output recipe for a request that is not a multiple of three, with every quantity
+        // past the range of a long: the ceiling, the draw and the leftover all have to stay exact.
+        assertEquals(UfoAmount.of(runs), result.plan().patternExecutions().get(recipe));
+        assertEquals(UfoAmount.of(ingots), result.plan().extractedFromInventory().get("ingot"));
+        assertEquals(UfoAmount.of(runs.multiply(BigInteger.valueOf(3)).subtract(request)),
+                result.plan().remaining().get("plate"));
+        assertTrue(result.plan().patternExecutions().values().iterator().next().bitLength() > 63);
+    }
+
+    @Test void batchingStaysExactAboveTheRangeOfALongOnTheSearchPath() {
+        BigInteger request = BigInteger.TWO.pow(70).add(BigInteger.ONE);
+        BigInteger runs = request.add(BigInteger.TWO).divide(BigInteger.valueOf(3));
+        var narrow = pattern("a-narrow", Map.of("ingot", amount(2)), Map.of("plate", amount(3)));
+        var wide = pattern("b-wide", Map.of("ingot", amount(4)), Map.of("plate", amount(3)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(narrow, wide)),
+                new PlanningRequest<>("plate", UfoAmount.of(request),
+                        Map.of("ingot", UfoAmount.of(runs.multiply(BigInteger.TWO)))));
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status(),
+                () -> "missing=" + result.plan().missing());
+        // Both routes yield three, so the cheaper leaf demand decides and the arithmetic is the same.
+        assertEquals(UfoAmount.of(runs), result.plan().patternExecutions().get(narrow));
+        assertFalse(result.plan().patternExecutions().containsKey(wide));
     }
 
     private static CraftingPattern<String> emitted(String id, Map<String, UfoAmount> inputs,
