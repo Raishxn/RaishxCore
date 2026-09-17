@@ -908,9 +908,10 @@ e o soak com grids reais continua pendente.
 - [x] UFO Future verde como consumidor real: o `settings.gradle` do UFO faz
       `includeBuild('../RaishxCore')` com substituição do módulo, então ele compila e roda contra a
       árvore local do Core e não contra o artefato publicado. Verificado em 2026-09-17 contra o motor
-      de então: **233 testes unitários e 30/30 GameTests verdes**, os GameTests exercitando a ponte
-      com uma grid AE2 real, que é onde a composição com o adaptador de ciclos e o comando de
-      diagnóstico vivem. O que continua fixado num Core anterior é o artefato **publicado**, e isso só
+      de então: **233 testes unitários, 30/30 GameTests e `./gradlew build` completo verdes**, com
+      `runData` executando e o working tree do UFO ficando limpo depois, ou seja, a saída gerada é
+      estável contra este Core. Os GameTests exercitam a ponte com uma grid AE2 real, que é onde a
+      composição com o adaptador de ciclos e o comando de diagnóstico vivem. O que continua fixado num Core anterior é o artefato **publicado**, e isso só
       importa no momento do release do UFO, não no desenvolvimento.
 - [ ] Soak com múltiplas grids e save real aprovado.
 - [ ] Relatório público diferencia fatos, limitações e capacidades opcionais: a matriz faz isso para
