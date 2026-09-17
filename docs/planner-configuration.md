@@ -67,6 +67,15 @@ for the ability to answer.
 into a key the plan is already expanding. It is what explains a shortage that looks
 like it should have had a route, and counting it costs a single increment.
 
+`lastPlan.routeChoiceLinks` is why the routes were chosen: one count per comparison
+link, in the order documented on `IterativeCraftingPlanner.CHOICE_LINK_COUNT`
+(priority, whether the route is short of an input, whether its leaf demand is known,
+leaf demand, reachability rank, shortage deficit, input cost, executions, yield,
+identifier). Only the two best candidates are compared, once, and only when a key
+really has more than one route, so a single-route plan pays nothing and reports
+`null`. When the last link decides, the plan was chosen on the identifier rather
+than on merit, which is exactly what an operator wants to know.
+
 Inside `lastPlan`, `missingConsumable`, `missingSeed` and `missingCarrier` are how
 much of the shortage is material that is gone once used, material that is handed
 back so one unit covers the batch, and carriers that wear out. The three `...Kinds`

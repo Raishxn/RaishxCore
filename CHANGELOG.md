@@ -15,6 +15,10 @@
   components, used only by the corpus and never by production. A test checks every
   declared witness against it, and another checks the engine's reported shortage
   against it on all 27 MISSING cases.
+- `lastPlan.routeChoiceLinks`: one count per comparison link that decided a route
+  choice, so an operator sees why a route won and not only which one. The histogram
+  is allocated only when a plan has a choice, so a single-route graph still pays
+  nothing.
 
 ## 0.1.0-alpha.3
 

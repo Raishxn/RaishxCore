@@ -777,9 +777,14 @@ Os **cortes de ciclo** também saem, como `lastPlan.cycleCuts`: quantas rotas fo
 terem que entrar numa chave que o plano já está expandindo. É o que explica um shortage que parecia
 ter rota, e contar custa um incremento.
 
-Falta a **rota escolhida e por quê**. A escolhida já está visível em `patternExecutions`; o "por quê"
-exigiria o planner registrar qual elo do comparador decidiu cada escolha, e isso ainda não existe. O `gap do solver` fica sem sentido enquanto a Fase 4 não
-existir, e está registrado como tal lá.
+A **rota escolhida e por quê** existe agora. A escolhida está em `patternExecutions`; o "por quê" sai
+como `lastPlan.routeChoiceLinks`, um histograma de qual elo do comparador separou o vencedor do
+segundo colocado, na ordem documentada em `CHOICE_LINK_COUNT`. Só os dois melhores candidatos são
+comparados, uma vez, e só quando uma chave realmente tem mais de uma rota, então o caminho comum de
+rota única não aloca nada e reporta `null`. A medição que autorizou a decisão: a computação custa zero
+bytes de alocação, o gate de 18 linhas passou, e no corpus os elos decisivos se distribuem (identificador,
+leaf demand, rank, deficit, prioridade) em vez de um só. O `gap do solver` fica sem sentido enquanto a
+Fase 4 não existir, e está registrado como tal lá.
 
 ## 14. Compatibilidade, API e rollout
 
