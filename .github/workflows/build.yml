@@ -29,15 +29,19 @@ jobs:
         run: ./gradlew test build --stacktrace
 
       - name: Run integration GameTests
-        run: ./gradlew runGameTestServer --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew runGameTestServer --stacktrace 2>&1 | tee gametest.log
 
       # runGameTestServer exits 0 when the mod fails to load, so a loading crash would otherwise
-      # sail through this gate. Require the completion banner the GameTest server prints.
+      # sail through this gate. Require the completion banner, from either the console output or the
+      # run log, so a log rotation cannot turn a real pass into a failure.
       - name: Assert the GameTests actually ran
         run: |
-          if ! grep -q "GAME TESTS COMPLETE" run/logs/latest.log; then
+          if ! grep -q "GAME TESTS COMPLETE" gametest.log run/logs/latest.log 2>/dev/null; then
             echo "::error::runGameTestServer finished without completing any GameTest"
-            tail -n 120 run/logs/latest.log
+            tail -n 150 gametest.log 2>/dev/null || true
+            tail -n 150 run/logs/latest.log 2>/dev/null || true
             exit 1
           fi
 
@@ -116,12 +120,31 @@ jobs:
           echo "value=$VALUE" >> "$GITHUB_OUTPUT"
 
       - name: Verify against AE2 ${{ steps.ae2.outputs.value }}
-        run: ./gradlew clean test build runGameTestServer -Pae2_version=${{ steps.ae2.outputs.value }} --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew clean test build runGameTestServer -Pae2_version=${{ steps.ae2.outputs.value }} --stacktrace 2>&1 | tee build-verify.log
 
+      # Accept the banner from either the captured console output or the run log, so a log rotation
+      # cannot turn a real pass into a failure, and print both when neither has it.
       - name: Assert the GameTests actually ran
         run: |
-          if ! grep -q "GAME TESTS COMPLETE" run/logs/latest.log; then
+          if ! grep -q "GAME TESTS COMPLETE" build-verify.log run/logs/latest.log 2>/dev/null; then
             echo "::error::AE2 ${{ steps.ae2.outputs.value }} did not complete any GameTest"
-            tail -n 120 run/logs/latest.log
+            tail -n 150 build-verify.log 2>/dev/null || true
+            tail -n 150 run/logs/latest.log 2>/dev/null || true
             exit 1
           fi
+
+      # The AE2 compatibility job has failed intermittently without leaving evidence. Upload first,
+      # diagnose second.
+      - name: Upload compatibility diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: raishxcore-ae2-${{ steps.ae2.outputs.value }}-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            build-verify.log
+            run/logs
+            crash-reports
+            build/reports/tests
