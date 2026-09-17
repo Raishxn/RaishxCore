@@ -12,3 +12,9 @@ runs/
 eclipse/
 
 logs/
+
+# Planner comparison harness. The reference adapters are kept in the working tree for local
+# measurement but are not part of the repository: they compile only against a sibling checkout of
+# another planner and are never shipped or run by the normal build or CI.
+src/benchmarkReference/
+src/corpusReference/
