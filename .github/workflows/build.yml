@@ -119,18 +119,26 @@ jobs:
           )
           echo "value=$VALUE" >> "$GITHUB_OUTPUT"
 
+      # Split exactly like the verify job. org.gradle.parallel is on, so asking for the unit tests
+      # and the GameTest server in one invocation lets two JVMs and two Minecraft starts contend on
+      # one runner, which is the most likely source of this job's intermittency.
       - name: Verify against AE2 ${{ steps.ae2.outputs.value }}
         run: |
           set -o pipefail
-          ./gradlew clean test build runGameTestServer -Pae2_version=${{ steps.ae2.outputs.value }} --stacktrace 2>&1 | tee build-verify.log
+          ./gradlew clean test build -Pae2_version=${{ steps.ae2.outputs.value }} --stacktrace 2>&1 | tee build-verify.log
+
+      - name: Run integration GameTests against AE2 ${{ steps.ae2.outputs.value }}
+        run: |
+          set -o pipefail
+          ./gradlew runGameTestServer -Pae2_version=${{ steps.ae2.outputs.value }} --stacktrace 2>&1 | tee gametest.log
 
       # Accept the banner from either the captured console output or the run log, so a log rotation
       # cannot turn a real pass into a failure, and print both when neither has it.
       - name: Assert the GameTests actually ran
         run: |
-          if ! grep -q "GAME TESTS COMPLETE" build-verify.log run/logs/latest.log 2>/dev/null; then
+          if ! grep -q "GAME TESTS COMPLETE" gametest.log run/logs/latest.log 2>/dev/null; then
             echo "::error::AE2 ${{ steps.ae2.outputs.value }} did not complete any GameTest"
-            tail -n 150 build-verify.log 2>/dev/null || true
+            tail -n 150 gametest.log 2>/dev/null || true
             tail -n 150 run/logs/latest.log 2>/dev/null || true
             exit 1
           fi
@@ -145,6 +153,7 @@ jobs:
           if-no-files-found: warn
           path: |
             build-verify.log
+            gametest.log
             run/logs
             crash-reports
             build/reports/tests
