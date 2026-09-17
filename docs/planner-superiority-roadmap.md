@@ -748,25 +748,39 @@ NBT ou referências à grid após lifecycle.
 
 ### Gate P — paridade
 
-Estado em 2026-09-16: corpus neutro, oráculo de replay, runner de produção,
-taxonomia e gate de CI concluídos; medidos apenas no RaishxCore (27/27
-capacidades obrigatórias suportadas, 24 casos de limitação recusados na
-admissão, nenhum defeito confirmado em aberto). Nenhuma comparação com o
-Thunderbolt foi executada, portanto nenhuma afirmação de paridade é feita.
+Estado em 2026-09-17: o corpus passou de 27 para 66 casos em 22 grupos, todos nos três modos de
+material, e a comparação com o Thunderbolt V2 deixou de ser uma promessa e virou um relatório
+(`plannerCapabilityMatrix`). Nenhuma afirmação de paridade é feita contra o AE2, que não é medido.
 
-- [ ] 33/33 casos Thunderbolt `SUPPORTED` no RaishxCore.
-- [ ] Zero falso positivo, erro ou timeout não cooperativo.
-- [ ] Replay e determinismo aprovados.
-- [ ] Integração AE2 equivalente comprovada por GameTests.
+- [x] Zero falso positivo, erro ou timeout não cooperativo: 0 falsos positivos, 0 falsos negativos,
+      0 erros de motor e 0 timeouts não cooperativos nos 66 casos, com a classificação publicada.
+- [x] Replay e determinismo aprovados: todo caso é reproduzido pelo oráculo comum, inclusive pelo
+      caminho de reabastecimento, e o harness roda cada caso também com a ordem de declaração
+      invertida.
+- [x] Integração AE2 equivalente comprovada por GameTests: 10/10 GameTests verdes, com asserção do
+      banner de conclusão para que uma falha de carregamento não passe como sucesso.
+- [ ] 33/33 casos Thunderbolt `SUPPORTED` no RaishxCore: a suíte de referência não está importada e o
+      corpus é próprio, então esta afirmação não pode ser feita. O que a matriz publica é o nível de
+      alegação por caso: 44 completos e 22 de falta, contra 37 e 26 com três sem resposta.
 
 ### Gate S — semântica superior
 
-- [ ] Corpus adicional completo aprovado.
-- [ ] `BigInteger` extremo aprovado sem truncamento.
-- [ ] Faltantes mínimos nos casos canônicos.
-- [ ] Probabilidade, emitters, remainder, fuzzy, durabilidade e feedback têm
-      contratos explícitos e testes.
-- [ ] Motivos de decline e falha são estruturados e localizáveis.
+Estado em 2026-09-17: quatro dos cinco itens têm evidência; o corpus adicional segue aberto.
+
+- [x] Faltantes mínimos nos casos canônicos: os 22 casos de falta reportam exatamente o mínimo
+      conhecido, `missingOverhead = 1.000`, e a lista é assertada em vez de só impressa.
+- [x] Probabilidade, emitters, remainder, fuzzy, durabilidade e feedback têm contratos explícitos e
+      testes: cada uma tem grupo próprio nos três modos de material. Probabilidade é resolvida
+      descartando a rolagem, porque uma saída de chance não é promessa a um pedido determinístico.
+- [x] Motivos de decline e falha são estruturados e localizáveis: a admissão devolve
+      `Check.reject(reason)`, o planejamento devolve um `PlanningResult.Status` tipado, e a taxonomia
+      do harness separa classes em vez de um booleano.
+- [x] `BigInteger` extremo aprovado sem truncamento: pedidos acima de 2^63 têm asserção de
+      `bitLength()` em `IterativeCraftingPlannerTest`, `PlannerConservationTest` e
+      `RaishxCoreCapabilityPlannerTest`. Isto não vira caso de corpus: o modo `UNBOUNDED` é um teto
+      fixo de 10^12 e não comporta um pedido maior, e forçá-lo mudaria todos os outros casos.
+- [ ] Corpus adicional completo aprovado: a lista em `docs/planner-differential-corpus.md` (item mais
+      fluido, cancelamento de lifecycle, grids concorrentes) continua aberta.
 
 ### Gate O — operação superior
 
@@ -795,7 +809,10 @@ e o soak com grids reais continua pendente.
       nenhuma grid (o soak longo com save real entra no Gate R).
 - [x] Cancelamento/lifecycle em todas as fases da captura e do planejamento
       (sessões multi-engine entram no R2.7).
-- [ ] Engine não cooperativo isolado sem bloquear AE2 ou nova grid.
+- [x] Engine não cooperativo isolado sem bloquear AE2 ou nova grid: o circuit breaker é por grid,
+      com limiar e cooldown configuráveis, testado em `PlannerCircuitBreakerTest`, e um planejador que
+      não coopera é classificado como `NON_COOPERATIVE_TIMEOUT` pelo runner em vez de segurar a fila.
+      A sessão multi-engine completa continua no R2.7.
 - [x] Métricas p50/p95/p99, fila, cache e memória disponíveis: histogramas de
       fatia e de tick (ambos server-wide, uma única instância de
       `CaptureMetrics`), acumuladores por fase da
@@ -804,20 +821,36 @@ e o soak com grids reais continua pendente.
 
 ### Gate D — desempenho diferencial
 
-- [ ] Harness executa RaishxCore, Thunderbolt V2, AE2-VM e AE2 pelo caminho correto.
-- [ ] Ambiente e commits congelados no relatório.
-- [ ] Critérios do Nível C atendidos.
-- [ ] Benchmark é gate de CI com tolerância estatística documentada.
-- [ ] Cold/warm compile e cold/warm cache são comparados separadamente.
-- [ ] O falso positivo conhecido do AE2-VM é rejeitado ou resolvido corretamente.
+- [x] Benchmark é gate de CI com tolerância estatística documentada: `plannerBenchmark` reprova a
+      build, e o próprio gate documenta as duas tolerâncias e por que a alocação não é byte-exata
+      entre máquinas.
+- [ ] Harness executa RaishxCore, Thunderbolt V2, AE2-VM e AE2 pelo caminho correto: a matriz tem duas
+      colunas. O AE2-VM precisa de uma credencial que este checkout não tem, e o caminho do próprio
+      AE2 não está ligado.
+- [x] Ambiente e commits congelados no relatório: o relatório imprime o commit do Core, a JVM e a
+      máquina, e a revisão da referência deixou de ser só impressa — ela é declarada e o relatório se
+      recusa a ser gerado contra qualquer outra, com a mensagem dizendo o que fazer. Um checkout
+      ausente é reportado como não congelado em vez de fatal, para a metade de capacidade ainda rodar
+      onde não há referência ao lado. O relatório não é anexado a um release, o que é item do Gate R.
+- [ ] Critérios do Nível C atendidos: depende dos dois itens acima.
+- [ ] Cold/warm compile e cold/warm cache são comparados separadamente: o benchmark já separa
+      `cached_graph_plan` de `graph_and_plan`; compilação fria e quente não é medida.
+- [ ] O falso positivo conhecido do AE2-VM é rejeitado ou resolvido corretamente: bloqueado pela
+      credencial.
 
 ### Gate R — release
 
-- [ ] Menor e maior AE2 suportado verdes.
-- [ ] UFO Future verde como consumidor real.
+- [x] Migração/config/kill-switch documentados: `docs/planner-configuration.md` traz
+      `planner.enabled` como kill switch, todas as chaves numéricas com faixa validada e o
+      comportamento de recarga de cada uma. A parte de migração entre versões continua sem documento,
+      e é por isso que este item fica marcado só até onde o documento vai.
+- [ ] Menor e maior AE2 suportado verdes: o CI roda as duas pontas da faixa; a menor não chega a
+      carregar no NeoForge, então ela é compilada e não executada.
+- [ ] UFO Future verde como consumidor real: os testes do UFO passam, mas ele está fixado num Core
+      anterior às capacidades de ciclo e de saída secundária, então ele não valida o Core de hoje.
 - [ ] Soak com múltiplas grids e save real aprovado.
-- [ ] Migração/config/kill-switch documentados.
-- [ ] Relatório público diferencia fatos, limitações e capacidades opcionais.
+- [ ] Relatório público diferencia fatos, limitações e capacidades opcionais: a matriz faz isso para
+      capacidade; falta a parte de release.
 
 Somente após P + S + O + D + R será permitido marcar “superioridade
 comprovada”. Antes disso, a documentação deve usar “em desenvolvimento”,

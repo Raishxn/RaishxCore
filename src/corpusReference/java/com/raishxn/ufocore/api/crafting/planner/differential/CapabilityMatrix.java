@@ -237,11 +237,33 @@ public final class CapabilityMatrix {
      * report leads with the commits and the environment instead of leaving them to be guessed - the
      * roadmap asks for a reproducible report, and a table without this is an anecdote.
      */
+    /**
+     * The reference revision this comparison is frozen against. A reference that moves between two
+     * runs makes the two reports incomparable while looking identical, so the hash is declared rather
+     * than merely printed. Printing it is a record; this is the freeze. The roadmap asks for the
+     * environment and the commits to be pinned in the report, and a report that cannot say which
+     * reference it measured is an anecdote with a table attached.
+     */
+    private static final String FROZEN_THUNDERBOLT_REVISION =
+            "30df1ca8eb42c85f7dcb617623b456f1b6f78e39";
+
     private static void appendProvenance(StringBuilder text) {
+        String reference = gitRevision(Path.of("..", "Thunderbolt-Core"));
+        // A checkout that is not there at all is reported as unknown rather than fatal, so the
+        // capability half still runs on a machine that has no reference beside it. A checkout that is
+        // there and different is fatal, because that is a comparison quietly being taken against
+        // something other than what the report claims.
+        if (!"unknown".equals(reference) && !FROZEN_THUNDERBOLT_REVISION.equals(reference)) {
+            throw new IllegalStateException("the Thunderbolt checkout is at " + reference
+                    + " but this comparison is frozen against " + FROZEN_THUNDERBOLT_REVISION
+                    + "; either restore that revision or update the constant in the same commit that "
+                    + "re-runs the comparison, so the report always names what it measured");
+        }
         text.append("== provenance ==\n");
         text.append("raishxcore commit    : ").append(gitRevision(Path.of("."))).append('\n');
         text.append("thunderbolt checkout : ").append(Path.of("..", "Thunderbolt-Core").toAbsolutePath().normalize())
-                .append(" @ ").append(gitRevision(Path.of("..", "Thunderbolt-Core"))).append('\n');
+                .append(" @ ").append(reference).append(reference.equals(FROZEN_THUNDERBOLT_REVISION)
+                        ? " (frozen)" : " (not frozen: no checkout to verify)").append('\n');
         text.append("java                 : ").append(System.getProperty("java.version")).append(' ')
                 .append(System.getProperty("java.vm.name")).append('\n');
         text.append("os                   : ").append(System.getProperty("os.name")).append(' ')
