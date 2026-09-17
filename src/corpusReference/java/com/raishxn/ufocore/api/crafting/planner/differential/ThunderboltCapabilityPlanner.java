@@ -78,7 +78,10 @@ public final class ThunderboltCapabilityPlanner implements CapabilityPlanner {
             CapabilityOutput primary = primaryOutput(pattern);
             List<CraftInput<String>> inputs = new ArrayList<>(pattern.inputs().size());
             for (CapabilityInput input : pattern.inputs()) {
-                inputs.add(lowerInput(pattern, input));
+                CraftInput<String> lowered = lowerInput(builder, pattern, input);
+                if (lowered != null) {
+                    inputs.add(lowered);
+                }
             }
             List<CraftOutput<String>> byproducts = new ArrayList<>();
             for (CapabilityOutput output : pattern.outputs()) {
@@ -106,18 +109,39 @@ public final class ThunderboltCapabilityPlanner implements CapabilityPlanner {
         return builder.build();
     }
 
-    private static CraftInput<String> lowerInput(CapabilityPattern pattern, CapabilityInput input) {
+    /**
+     * Lowers one input slot.
+     *
+     * <p>Returns {@code null} for an emitter input: the neutral model declares it satisfied by an
+     * authorized external source, so it is never drawn from inventory. That is exactly what the
+     * corpus expects when it reports a shortage on the ordinary inputs only.
+     */
+    private static CraftInput<String> lowerInput(CraftGraph.Builder<String> builder,
+                                                 CapabilityPattern pattern, CapabilityInput input) {
         long amount = input.amount().longValueExact();
         return switch (input.kind()) {
             case EXACT -> CraftInput.of(input.key(), amount);
-            case REUSABLE -> CraftInput.returnedFrom(input.key(), amount,
-                    // The storage scope must match the scope the seed stock is declared under, or the
-                    // planner never finds the seed and reports a shortage the corpus does not expect.
-                    new ReusableStockSource(input.host(), input.host()));
+            case REUSABLE -> CraftInput.returnedFrom(input.key(), amount, reusableSource(input.host()));
             case FINITE_USE -> CraftInput.finiteUse(input.key(), amount, input.uses());
-            case FUZZY -> throw new AdapterGap("fuzzy input " + input.key() + " in " + pattern.id());
-            case EMITTER -> throw new AdapterGap("emitter input " + input.key() + " in " + pattern.id());
+            case FUZZY -> {
+                // A logical key routed to a concrete variant of the same host is exactly Thunderbolt's
+                // per-route reusable seed: the route lists the variants it accepts, and the variant
+                // stock is declared as host-owned reusable stock.
+                ReusableStockSource source = reusableSource(input.host());
+                builder.reusableStockRoute(source, input.key(), input.alternatives());
+                yield CraftInput.returnedFrom(input.key(), amount, source);
+            }
+            case EMITTER -> null;
         };
+    }
+
+    /**
+     * One host, one pool and one route scope. The storage scope must match the scope the seed stock
+     * is declared under, or the planner never finds the seed and reports a shortage the corpus does
+     * not expect.
+     */
+    private static ReusableStockSource reusableSource(String host) {
+        return new ReusableStockSource(host, host, host);
     }
 
     /** The output a Thunderbolt pattern is keyed on: the first declared primary, in declaration order. */
