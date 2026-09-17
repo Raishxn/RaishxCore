@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-26 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 78 cases.
+27 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 81 cases.
 
-Representable today and therefore `REQUIRED`, 78 cases:
+Representable today and therefore `REQUIRED`, 81 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -88,6 +88,7 @@ Representable today and therefore `REQUIRED`, 78 cases:
 | `multi-dag/greedy-trap` | route ordering trap at the reference scale of 32 conflicts |
 | `multi-dag/weighted-shortage` | two routes identical in units, told apart only by weight |
 | `multi-dag/weighted-leaf-cost` | routes differing in how much material they need, weighed |
+| `multi-dag/shared-stock-conflict` | two demands sharing two scarce materials, no feasible mix |
 | `batching/multi-output` | whole-batch rounding with a deterministic coproduct |
 | `byproduct/shared-coproduct` | one coproduct produced by two routes |
 | `byproduct/feeds-later-stage` | coproduct consumed by a later stage |
@@ -174,6 +175,16 @@ under-reports and is the safe direction for a shortage. The alternative — a si
 every recipe that consumes the key — is a modelling question this corpus does not answer either way,
 and the planner and the oracle agree on the reading they do share.
 
+## What the corpus is for
+
+It is a falsification instrument before it is a scoreboard. The ordering the planner uses consults
+priority, deficit, weighted leaf demand, reachability, weighted shortage, input cost, executions,
+yield and identifier, and the case for replacing it with an integer solver rests on that ordering
+losing somewhere. Six attempts to build such a case have failed, in different rounds and from
+different directions, and the shapes that came closest are in the corpus as regression guards —
+`multi-dag/shared-stock-conflict` among them. The roadmap's phase 4 records the conclusion: the
+solver stays unbuilt until a case makes it necessary, and the corpus is what would say so.
+
 ## Scale
 
 The greedy trap runs at the reference suite's own scale, 32 independent conflicts, and resolves in
@@ -250,7 +261,7 @@ why the assertions are on deterministic invariants and the benchmark gates the n
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 26 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 27 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.

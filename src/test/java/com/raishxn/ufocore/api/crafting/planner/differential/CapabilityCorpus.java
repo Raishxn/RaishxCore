@@ -73,6 +73,7 @@ public final class CapabilityCorpus {
         addDurabilityAcrossExpansions(scenarios);
         addCatalystWithCarrier(scenarios);
         addSecondaryOutbidsDeclared(scenarios);
+        addSharedStockConflict(scenarios);
         addFuzzyWithSecondary(scenarios);
         addWeightedShortage(scenarios);
         addWeightedLeafCost(scenarios);
@@ -340,6 +341,34 @@ public final class CapabilityCorpus {
      * secondary output used to be consulted only when nothing declared the key, so the expensive route
      * was taken and the request was reported short while a single scrap would have covered it.
      */
+    /**
+     * Two demands whose routes share two scarce materials, arranged so no combination is feasible and
+     * the cheapest way to be short is to mix the routes rather than to take either one twice. This is
+     * the shape a per-key greedy ordering should lose on, and it is here so that a change to the
+     * ordering has to keep winning rather than being assumed to.
+     */
+    private static void addSharedStockConflict(List<CapabilityScenario> out) {
+        Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
+                CapabilitySemantics.MULTI_ROUTE);
+        Map<String, UfoAmount> minimum = amounts(Map.of("p", 2L, "q", 2L));
+        Map<String, UfoAmount> starved = amounts(Map.of("p", 2L, "q", 1L));
+        threeModes(out, "multi-dag/shared-stock-conflict", CapabilityFamily.MULTI_DAG, 2, "goal",
+                UfoAmount.ONE, minimum, starved,
+                List.of(amounts(Map.of("p", 1L)), amounts(Map.of("q", 1L))), false, semantics,
+                CapabilityExpectation.REQUIRED, CapabilityCorpus::sharedStockConflict);
+    }
+
+    private static CapabilityGraph sharedStockConflict(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("x-a", List.of(input("p", 1)), List.of(primary("X", 1))),
+                CapabilityPattern.of("x-b", List.of(input("q", 1)), List.of(primary("X", 1))),
+                CapabilityPattern.of("y-a", List.of(input("p", 3)), List.of(primary("Y", 1))),
+                CapabilityPattern.of("y-b", List.of(input("q", 2)), List.of(primary("Y", 1))),
+                CapabilityPattern.of("assemble", List.of(input("X", 1), input("Y", 1)),
+                        List.of(primary("goal", 1))));
+        return graph(patterns, stock);
+    }
+
     private static void addSecondaryOutbidsDeclared(List<CapabilityScenario> out) {
         Set<CapabilitySemantics> semantics = Set.of(CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
                 CapabilitySemantics.DETERMINISTIC_BYPRODUCT, CapabilitySemantics.MULTI_ROUTE);

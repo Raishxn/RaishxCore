@@ -406,10 +406,32 @@ unidades cruas. Dez unidades baratas perdiam para uma cara, a decisão nunca che
 ponderado, e o relatório nomeava o material caro com overhead `10.0`. Agora a folha custa o peso que
 o request declarou, e toda a passada é feita na mesma moeda do faltante que ela tenta evitar.
 
-**Estado:** não iniciado como solver. O que existe é o adaptador de ciclos da Fase 2, que resolve a
-aritmética de um componente mas não otimiza entre rotas, e o backtracking local do planner
-iterativo. Nenhum dos dois reivindica o ótimo global, e o doc de classe do `IterativeCraftingPlanner`
+**Estado em 2026-09-17: avaliado e não construído.** O que existe é o adaptador de ciclos da Fase 2,
+que resolve a aritmética de um componente mas não otimiza entre rotas, e a busca gulosa do planner
+iterativo com journal reversível. Nenhum dos dois reivindica o ótimo global, e o doc de classe
 continua dizendo isso.
+
+O que a avaliação encontrou é que a heurística é mais forte do que esta fase supunha, e que o
+instrumento de falsificação é o corpus. A cadeia de comparação consulta, em ordem: prioridade do
+provider, existência de déficit, demanda de folha **ponderada**, rank de alcançabilidade, faltante
+**ponderado**, custo de entrada, número de execuções, rendimento e identificador. O déficit é
+recalculado a cada consumo e a demanda de folha precifica o resto da árvore, então as decisões de
+chaves diferentes se adaptam umas às outras em vez de serem escolhidas isoladamente.
+
+Seis tentativas de construir um caso em que essa ordem perde para o ótimo global falharam, em
+rodadas diferentes: duas rotas com o mesmo custo e execuções, um recurso escasso servindo duas
+pontas, uma rota barata por unidade mas cara no conjunto, um subproduto abundante contra uma rota
+declarada, e duas demandas disputando dois materiais escassos. Todas as formas que consegui montar
+foram vencidas pela heurística, e a última está no corpus como
+`multi-dag/shared-stock-conflict`, arranjada para que nenhuma combinação seja viável e o mínimo seja
+1 unidade por uma escolha mista — ela reporta exatamente isso.
+
+Então a conclusão é **não construir ainda**, e a condição que mudaria isso é explícita: um caso no
+corpus que reporte um faltante ponderado acima do mínimo e cujo ótimo exija uma escolha conjunta. O
+corpus é o instrumento; enquanto ele não falsificar, um solver inteiro é complexidade especulativa
+num caminho que hoje acerta 27 de 27 casos de falta. O que a fase continua devendo não é o solver, é
+a **prova** de que o ótimo vale para além dos casos tentados, e essa prova só aparece quando um caso
+falha.
 
 Um objetivo da lista já é respeitado, o de sobreprodução: entre rotas de mesmo custo e mesmo número
 de execuções, quem decide agora é a que sobra menos, e não o identificador. A chave usada é
