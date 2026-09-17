@@ -762,8 +762,13 @@ dizer, e só o que não se explica assim é chamado de seed. Escrever isso revel
 catalisador decaente sem estoque nenhum era cobrado duas vezes, uma pela checagem de presença e outra
 pelo saque do decaimento.
 
-Ainda falta **renderizar** o split: ele existe na API e ainda não aparece no comando, porque o
-relatório lê o diagnóstico do bridge e o bridge não carrega o split. Também faltam a rota escolhida e
+O split **é renderizado**: sai no comando como `missingConsumable`, `missingSeed` e
+`missingCarrier` mais a contagem de chaves de cada um, e a identidade dos itens fica de fora
+deliberadamente para o payload continuar sendo números. A primeira versão acumulava a demanda a cada
+saque, e o gate de alocação cobrou sete e meio por cento num caso cujo plano é completo; a segunda
+derivava varrendo o plano uma vez por chave faltante, e o gate cobrou vinte e sete por cento numa
+cadeia com uma folha faltante. A terceira deriva numa passada só e só para as chaves que faltam, e
+ficou em 1,11x e 1,10x. Também faltam a rota escolhida e
 por quê, cortes de ciclo, e contagem de nós, arestas e SCCs do componente. O `gap do solver` fica sem sentido enquanto a Fase 4 não
 existir, e está registrado como tal lá.
 

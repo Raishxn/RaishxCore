@@ -46,9 +46,16 @@ retried with different semantics.
 ## Diagnostics
 
 `/raishxcore planner` prints one JSON line per live planner: revision, cache hits and
-misses, status, the last plan's operation count and elapsed time, queue and worker
-counts, backpressure and circuit-breaker state, capture counters and byte ceilings,
-and the capture histograms. It needs permission level 2, which is the same level as
+misses, status, the last plan's operation count and elapsed time, the shortage split
+described below, queue and worker counts, backpressure and circuit-breaker state,
+capture counters and byte ceilings, and the capture histograms.
+
+Inside `lastPlan`, `missingConsumable`, `missingSeed` and `missingCarrier` are how
+much of the shortage is material that is gone once used, material that is handed
+back so one unit covers the batch, and carriers that wear out. The three `...Kinds`
+fields count how many distinct keys fall in each. This is the part that tells an
+operator a shortage includes a catalyst they get back rather than material they have
+to find. Item identities are deliberately absent: the payload stays numbers. It needs permission level 2, which is the same level as
 most operator diagnostics, and it is deliberately a command rather than a background
 log: nothing is written unless somebody asks.
 

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.api.crafting.planner.PlanningResult;
 import org.junit.jupiter.api.Test;
 
@@ -65,10 +66,34 @@ class PlannerDiagnosticsReportTest {
         assertTrue(PlannerDiagnosticsReport.toJson(diagnostics(null, "idle")).contains("\"lastPlan\":null"));
 
         String reported = PlannerDiagnosticsReport.toJson(
-                diagnostics(new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L), "COMPLETE"));
+                diagnostics(new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, noShortage()),
+                        "COMPLETE"));
         assertTrue(reported.contains("\"lastPlan\":{\"graphRevision\":7,\"operations\":1234,"
-                + "\"maximumDepth\":12,\"elapsedNanos\":987654}"), reported);
+                + "\"maximumDepth\":12,\"elapsedNanos\":987654,"), reported);
         assertFalse(reported.contains("\"lastPlan\":null"), reported);
+    }
+
+    /**
+     * The split is the part that tells an operator a shortage includes a catalyst they get back rather
+     * than material they have to find, so it has to survive the rendering as numbers.
+     */
+    @Test
+    void reportsTheShortageSplitInsideTheLastPlan() {
+        var shortage = new PlanningResult.ShortageSummary(UfoAmount.of(5L), UfoAmount.ONE, UfoAmount.of(2L),
+                1, 1, 1);
+        String json = PlannerDiagnosticsReport.toJson(diagnostics(
+                new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, shortage), "MISSING_INGREDIENTS"));
+
+        assertTrue(json.contains("\"missingConsumable\":5"), json);
+        assertTrue(json.contains("\"missingSeed\":1"), json);
+        assertTrue(json.contains("\"missingCarrier\":2"), json);
+        assertTrue(json.contains("\"missingConsumableKinds\":1"), json);
+        assertTrue(json.contains("\"missingSeedKinds\":1"), json);
+        assertTrue(json.contains("\"missingCarrierKinds\":1"), json);
+    }
+
+    private static PlanningResult.ShortageSummary noShortage() {
+        return new PlanningResult.ShortageSummary(UfoAmount.ZERO, UfoAmount.ZERO, UfoAmount.ZERO, 0, 0, 0);
     }
 
     @Test

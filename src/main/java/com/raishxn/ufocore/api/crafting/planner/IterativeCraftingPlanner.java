@@ -78,7 +78,8 @@ public final class IterativeCraftingPlanner<K> {
         var status = halt != null ? halt : plan.complete()
                 ? PlanningResult.Status.COMPLETE : PlanningResult.Status.MISSING_INGREDIENTS;
         return new PlanningResult<>(status, plan, new PlanningResult.Diagnostics(graph.revision(),
-                budget.operations, budget.maximumDepth, Math.max(0, nanoTime.getAsLong() - started)));
+                budget.operations, budget.maximumDepth, Math.max(0, nanoTime.getAsLong() - started),
+                PlanningResult.ShortageSummary.of(plan.shortage())));
     }
 
     private void planDag(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State state, Budget budget) {
@@ -362,7 +363,6 @@ public final class IterativeCraftingPlanner<K> {
                 // time, because it really is consumed every time.
                 // Allocated on first use: a graph with no catalyst at all must not pay for a map that
                 // would stay empty, and most graphs are that.
-                state.add(state.demandSeed, input.key(), input.amount());
                 UfoAmount working = input.amount().subtractClamped(state.presence == null
                         ? UfoAmount.ZERO : state.presence.getOrDefault(input.key(), UfoAmount.ZERO));
                 if (!working.isZero()) {
@@ -390,7 +390,6 @@ public final class IterativeCraftingPlanner<K> {
                 selfConsumedPerRun = selfConsumedPerRun.add(input.amount());
                 feedingDraws.add(drawn);
             } else {
-                state.add(input.durable() ? state.demandCarrier : state.demandConsumable, input.key(), drawn);
                 outside.add(input);
                 outsideDraws.add(drawn);
             }
@@ -402,7 +401,6 @@ public final class IterativeCraftingPlanner<K> {
             // shortage is supplied, and unlike a consumed input a seed is not used up, so the residue
             // it leaves has to appear in the plan.
             UfoAmount seed = state.extracted.getOrDefault(key, UfoAmount.ZERO);
-            state.add(state.demandSeed, key, selfConsumedPerRun);
             UfoAmount shortfall = selfConsumedPerRun.subtractClamped(seed);
             if (!shortfall.isZero()) {
                 state.add(state.missing, key, shortfall);
@@ -658,10 +656,7 @@ public final class IterativeCraftingPlanner<K> {
          * the same catalyst twice.
          */
         Map<K, UfoAmount> presence;
-        /** What the plan asks of each key as ordinary consumption, as a worn carrier, as a returned seed. */
-        final Map<K, UfoAmount> demandConsumable = new HashMap<>();
-        final Map<K, UfoAmount> demandCarrier = new HashMap<>();
-        final Map<K, UfoAmount> demandSeed = new HashMap<>();
+        final ImmutableCraftingGraph<K> graph;
         /**
          * Firings already served by each durable carrier group. A carrier survives several firings, so
          * a plan that expands the same recipe twice - once for its primary and again to chase a
@@ -675,6 +670,7 @@ public final class IterativeCraftingPlanner<K> {
         final ArrayList<Runnable> journal = new ArrayList<>();
         boolean journaling;
         State(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request) {
+            this.graph = graph;
             keys = graph.keyComparator();
             stock = new TreeMap<>(keys); stock.putAll(request.inventory());
             crafted = new TreeMap<>(keys); extracted = new TreeMap<>(keys); missing = new TreeMap<>(keys);
@@ -751,27 +747,84 @@ public final class IterativeCraftingPlanner<K> {
          * cannot be explained that way a seed. A key can be short for more than one reason at once, and
          * the consumed part is the one worth naming.
          */
+        /** Shared by every plan that is short of nothing, so an empty split costs nothing. */
+        private static final CraftingPlan.Shortage<Object> NO_SHORTAGE =
+                new CraftingPlan.Shortage<>(Map.of(), Map.of(), Map.of());
+
+        /** True when the pattern produces the key, which makes an input of it a seed rather than food. */
+        private boolean produces(CompiledPattern<K> pattern, K key) {
+            for (PatternEntry<K> output : pattern.outputs()) {
+                if (output.key().equals(key)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @SuppressWarnings("unchecked")
         private CraftingPlan.Shortage<K> splitShortage(Map<K, UfoAmount> missing) {
+            if (missing.isEmpty()) {
+                // Three maps for a plan with no shortage is three maps too many, and most plans have
+                // none: the allocation gate charged seven and a half percent for it on a case whose
+                // plan is complete.
+                return (CraftingPlan.Shortage<K>) NO_SHORTAGE;
+            }
+            // Derived from the executions the plan settled on rather than accumulated while it was
+            // built. Accumulating per draw charged every plan for a diagnostic only a short one needs,
+            // which is the same reason the split is computed here rather than in the search.
+            // One pass over the plan, for the keys that are actually missing: asking per key walked the
+            // whole plan once per key. The graph is walked rather than indexed, so nothing is built to
+            // look up what is already reachable.
+            Map<K, UfoAmount[]> askedByKey = new HashMap<>();
+            for (CompiledPattern<K> pattern : graph.compiledPatterns()) {
+                UfoAmount runs = executions.get(pattern.pattern());
+                if (runs == null) {
+                    continue;
+                }
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    if (!missing.containsKey(input.key())) {
+                        continue;
+                    }
+                    UfoAmount[] asked = askedByKey.computeIfAbsent(input.key(),
+                            ignored -> new UfoAmount[] {UfoAmount.ZERO, UfoAmount.ZERO, UfoAmount.ZERO});
+                    if (input.reusable()) {
+                        asked[2] = asked[2].add(input.amount());
+                    } else if (input.durable()) {
+                        asked[1] = asked[1].add(multiply(input.amount(),
+                                ceil(runs, UfoAmount.of(input.uses()))));
+                    } else if (produces(pattern, input.key())) {
+                        // A self-feeding input is the material it makes, so it is handed back.
+                        asked[2] = asked[2].add(multiply(input.amount(), runs));
+                    } else {
+                        asked[0] = asked[0].add(multiply(input.amount(), runs));
+                    }
+                }
+            }
             Map<K, UfoAmount> consumable = new LinkedHashMap<>();
             Map<K, UfoAmount> carrier = new LinkedHashMap<>();
             Map<K, UfoAmount> seed = new LinkedHashMap<>();
-            missing.forEach((key, amount) -> {
-                UfoAmount left = amount;
-                UfoAmount eaten = left.min(demandConsumable.getOrDefault(key, UfoAmount.ZERO));
-                if (!eaten.isZero()) {
-                    consumable.put(key, eaten);
-                    left = left.subtract(eaten);
+            for (K key : missing.keySet()) {
+                UfoAmount[] asked = askedByKey.getOrDefault(key,
+                        new UfoAmount[] {UfoAmount.ZERO, UfoAmount.ZERO, UfoAmount.ZERO});
+                UfoAmount left = missing.get(key);
+                UfoAmount byConsumable = left.min(asked[0]);
+                if (!byConsumable.isZero()) {
+                    consumable.put(key, byConsumable);
+                    left = left.subtract(byConsumable);
                 }
-                UfoAmount worn = left.min(demandCarrier.getOrDefault(key, UfoAmount.ZERO));
-                if (!worn.isZero()) {
-                    carrier.put(key, worn);
-                    left = left.subtract(worn);
+                UfoAmount byCarrier = left.min(asked[1]);
+                if (!byCarrier.isZero()) {
+                    carrier.put(key, byCarrier);
+                    left = left.subtract(byCarrier);
                 }
                 if (!left.isZero()) {
+                    // Whatever the plan's own demand cannot explain was asked for as a seed, or the key
+                    // is the target of a request nothing routes at all, which is material to be found.
                     seed.put(key, left);
                 }
-            });
+            }
             return new CraftingPlan.Shortage<>(consumable, seed, carrier);
         }
+
     }
 }

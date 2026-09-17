@@ -1,5 +1,6 @@
 package com.raishxn.ufocore.neoforge.crafting;
 
+import com.raishxn.ufocore.api.crafting.planner.PlanningResult;
 import java.util.Locale;
 
 /**
@@ -69,10 +70,19 @@ public final class PlannerDiagnosticsReport {
         if (lastPlan == null) {
             json.append(",\"lastPlan\":null");
         } else {
+            var shortage = lastPlan.shortage();
             json.append(",\"lastPlan\":{\"graphRevision\":").append(lastPlan.graphRevision())
                     .append(",\"operations\":").append(lastPlan.operations())
                     .append(",\"maximumDepth\":").append(lastPlan.maximumDepth())
                     .append(",\"elapsedNanos\":").append(lastPlan.elapsedNanos())
+                    // The split is what tells an operator that part of a shortage is a catalyst they
+                    // get back rather than material they have to find.
+                    .append(",\"missingConsumable\":").append(shortage.consumable().asBigInteger())
+                    .append(",\"missingSeed\":").append(shortage.seed().asBigInteger())
+                    .append(",\"missingCarrier\":").append(shortage.carrier().asBigInteger())
+                    .append(",\"missingConsumableKinds\":").append(shortage.consumableKinds())
+                    .append(",\"missingSeedKinds\":").append(shortage.seedKinds())
+                    .append(",\"missingCarrierKinds\":").append(shortage.carrierKinds())
                     .append('}');
         }
         return json.append('}').toString();
@@ -80,14 +90,14 @@ public final class PlannerDiagnosticsReport {
 
     /** The plan diagnostics as this renderer needs them, so the shape is pinned in one place. */
     private record PlanningResultDiagnostics(long graphRevision, long operations, int maximumDepth,
-                                             long elapsedNanos) {
+                                             long elapsedNanos, PlanningResult.ShortageSummary shortage) {
     }
 
     private static PlanningResultDiagnostics lastPlan(Ae2PlannerBridge.Diagnostics diagnostics) {
         var plan = diagnostics.lastPlan();
         return plan == null ? null
                 : new PlanningResultDiagnostics(plan.graphRevision(), plan.operations(),
-                        plan.maximumDepth(), plan.elapsedNanos());
+                        plan.maximumDepth(), plan.elapsedNanos(), plan.shortage());
     }
 
     private static String escape(String value) {
