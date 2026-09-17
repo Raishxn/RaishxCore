@@ -51,7 +51,12 @@ class DifferentialCorpusTest {
             // to see that the ring's two gainful legs are usable while the lossy return leg is not
             // worth taking: an A turned into nine B and one of those B into nine C is a real route, a
             // B turned back into A is not.
-            "cycle/conversion-ring");
+            "cycle/conversion-ring",
+            // Both catalyst loops are the same closed form, one with no loss and one with a loss per
+            // turn. The lossy one is the sharper check: charging every turn instead of every turn but
+            // the last reports eleven where ten suffices, and the witness pins ten.
+            "catalyst/raw-feedback-loop",
+            "catalyst/lossy-feedback-loop");
 
     private static DifferentialHarness.Report report;
 
@@ -98,7 +103,7 @@ class DifferentialCorpusTest {
         // a key that is being expanded, and the leaf-cost pass already leaves keys on a cycle out of
         // the cost map rather than failing, so the ring was a safe decline that turned out to be a
         // capability the engine had all along and never claimed.
-        assertEquals(45, report.supportedRequired());
+        assertEquals(51, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
@@ -119,7 +124,10 @@ class DifferentialCorpusTest {
                             + entry.classification());
         }
         assertEquals(0, report.supportedLimitations());
-        assertEquals(6, report.of(CapabilityExpectation.LIMITATION).size());
+        // Every family the corpus declares is claimed now, so nothing is left in this bucket. The
+        // assertion above stays: a limitation that reappears must still decline safely rather than be
+        // counted as support.
+        assertEquals(0, report.of(CapabilityExpectation.LIMITATION).size());
     }
 
     @Test void everyResultIsDeterministic() {
@@ -149,10 +157,10 @@ class DifferentialCorpusTest {
                 CapabilityFamily.BATCHING, CapabilityFamily.BYPRODUCT, CapabilityFamily.DEEP_CHAIN,
                 CapabilityFamily.REUSABLE_CATALYST, CapabilityFamily.FINITE_DURABILITY,
                 CapabilityFamily.FUZZY_VARIANT, CapabilityFamily.EMITTER,
-                CapabilityFamily.POSITIVE_FEEDBACK, CapabilityFamily.CONVERSION_CYCLE),
+                CapabilityFamily.POSITIVE_FEEDBACK, CapabilityFamily.CONVERSION_CYCLE,
+                CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
                 required);
-        assertEquals(Set.of(CapabilityFamily.CONSERVATIVE_FEEDBACK, CapabilityFamily.LOSSY_FEEDBACK),
-                limitations);
+        assertEquals(Set.of(), limitations);
     }
 
     @Test void reportContainsEveryFieldTheStandardRequires() {

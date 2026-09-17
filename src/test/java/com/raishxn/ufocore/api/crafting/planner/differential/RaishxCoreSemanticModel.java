@@ -41,7 +41,9 @@ public final class RaishxCoreSemanticModel {
             CapabilitySemantics.FUZZY_ALTERNATIVES,
             CapabilitySemantics.EMITTER,
             CapabilitySemantics.POSITIVE_FEEDBACK,
-            CapabilitySemantics.CONVERSION_CYCLE));
+            CapabilitySemantics.CONVERSION_CYCLE,
+            CapabilitySemantics.CONSERVATIVE_FEEDBACK,
+            CapabilitySemantics.LOSSY_FEEDBACK));
 
     private RaishxCoreSemanticModel() {
     }

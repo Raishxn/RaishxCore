@@ -18,9 +18,18 @@ class RaishxCoreCapabilityPlannerTest {
     private final CapabilityPlanner planner =
             new RaishxCoreCapabilityPlanner(Duration.ofSeconds(5));
 
-    @Test void rejectsEveryDeclaredLimitationBeforePlanning() {
+    /**
+     * The corpus carried explicit limitations while the feedback and cycle families were unsafe to
+     * claim, so this asserted there was work left to refuse. There is none now, and that is the point:
+     * every family the corpus declares is claimed, and the model has to cover the semantics each one
+     * uses. The refusal loop stays because a limitation that reappears must be refused before planning
+     * rather than planned wrongly, which is the failure this test exists to catch.
+     */
+    @Test void everyFamilyTheCorpusDeclaresIsRepresentable() {
         List<CapabilityScenario> limitations = CapabilityCorpus.limitations();
-        assertFalse(limitations.isEmpty());
+        assertTrue(limitations.isEmpty(),
+                () -> "every family is claimed now, so a declared limitation is a finding: "
+                        + limitations.stream().map(CapabilityScenario::label).toList());
         for (CapabilityScenario scenario : limitations) {
             CapabilityPlanner.Check check = planner.check(scenario);
             assertFalse(check.accepted(), () -> scenario.label() + " must be refused");
@@ -28,12 +37,18 @@ class RaishxCoreCapabilityPlannerTest {
             assertEquals(CapabilityPlanner.Outcome.Kind.DECLINED,
                     planner.plan(scenario).kind(), scenario.label());
         }
+        for (CapabilityScenario scenario : CapabilityCorpus.required()) {
+            for (CapabilitySemantics semantics : scenario.requiredSemantics()) {
+                assertTrue(RaishxCoreSemanticModel.supports(semantics), () -> scenario.label()
+                        + " declares " + semantics + ", which the model does not claim");
+            }
+        }
     }
 
     @Test void acceptsEveryRepresentableScenario() {
         List<CapabilityScenario> required = CapabilityCorpus.required();
-        // 39 before the feedback and cycle families were activated; both are representable now.
-        assertEquals(45, required.size());
+        // 39 before the feedback and cycle families were activated; all four are representable now.
+        assertEquals(51, required.size());
         for (CapabilityScenario scenario : required) {
             assertTrue(planner.check(scenario).accepted(),
                     () -> scenario.label() + " must be admitted: " + planner.check(scenario).reason());

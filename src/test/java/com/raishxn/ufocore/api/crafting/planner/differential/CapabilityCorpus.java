@@ -321,7 +321,7 @@ public final class CapabilityCorpus {
         threeModes(out, "catalyst/raw-feedback-loop", CapabilityFamily.CONSERVATIVE_FEEDBACK, 8, "E",
                 UfoAmount.of(8), minimum, starved,
                 List.of(amounts(Map.of("A", 1L)), amounts(Map.of("D", 1L))), false, semantics,
-                CapabilityExpectation.LIMITATION, stock -> new CapabilityGraph(patterns, consumable(stock)));
+                CapabilityExpectation.REQUIRED, stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 
     private static void addLossyFeedbackLoop(List<CapabilityScenario> out) {
@@ -334,7 +334,7 @@ public final class CapabilityCorpus {
                         List.of(primary("D", 1), byproduct("A", 2))));
         threeModes(out, "catalyst/lossy-feedback-loop", CapabilityFamily.LOSSY_FEEDBACK, 8, "D",
                 UfoAmount.of(8), minimum, starved, List.of(amounts(Map.of("A", 2L))), true, semantics,
-                CapabilityExpectation.LIMITATION, stock -> new CapabilityGraph(patterns, consumable(stock)));
+                CapabilityExpectation.REQUIRED, stock -> new CapabilityGraph(patterns, consumable(stock)));
     }
 
     private static void addReturnedCatalyst(List<CapabilityScenario> out) {

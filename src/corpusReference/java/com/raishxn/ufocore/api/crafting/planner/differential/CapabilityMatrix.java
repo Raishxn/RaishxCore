@@ -216,6 +216,13 @@ public final class CapabilityMatrix {
 
         text.append("\n== cases ").append(core.planner().name())
                 .append(" does not support: what the reference claims ==\n");
+        if (complete + shortage + unsupported + error == 0) {
+            // Worth saying out loud rather than printing four zeroes: this section is the comparison
+            // that only exists while there is a gap, and the gap closing is the result, not a bug.
+            text.append("none: the engine claims every case in the corpus, so there is nothing left\n")
+                    .append("for the reference to be the only one to answer. The comparison that\n")
+                    .append("remains is the claim level and the shortage quality above.\n");
+        }
         text.append(rows).append('\n');
         text.append("reference claims to solve it : ").append(complete).append('\n');
         text.append("reference claims a shortage  : ").append(shortage).append('\n');

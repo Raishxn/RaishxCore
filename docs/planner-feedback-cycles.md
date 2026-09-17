@@ -205,6 +205,36 @@ exactly `seed`, taken from `consumable` and then `injected` the way other steps 
 and after the step `crafted += n·p − n·c + seed`. A run-by-run simulation produces the
 same pools, without the loop.
 
+## How the component is recognised and priced
+
+`FeedbackCyclePlanner` walks from the target's recipe along the single route into each of its inputs
+until a pattern repeats, and declines anything with a choice or a fork on the way. A single-pattern
+loop is left alone, because the planner already funds self-feeding growth a seed at a time.
+
+A loop has as many rotations as it has patterns, and they are not equally usable. Priming the wrong
+key asks for material the request never had, which reads as a shortage on a feasible scenario, so the
+rotation the inventory already covers wins, then the smallest shortage, then the fewest kinds of seed.
+For the conservative loop with one `A` and eight `C` in stock, priming `A` is feasible and priming `D`
+is not, and the two are otherwise identical, so nothing but the inventory can tell them apart.
+
+One turn is then priced by walking it in that order. A pattern draws its inputs before it produces
+anything, so the deepest point of a turn is the running consumption less everything produced before
+it, not the balance at the end. Self-growth falls out as the one-pattern case of the same walk, and
+the conversion ring needs none of it.
+
+The macro is a decaying catalyst: working stock present, decay consumed per firing. The plan is
+rewritten back to the real patterns turn by turn rather than grouped, because grouping lets a reader
+or a machine ask for the whole batch of the first pattern before the pattern that returns the catalyst
+has run — the very thing the loop makes impossible. A request whose expansion would be enormous is
+declined instead, since a plan that cannot be written down cannot be executed.
+
+The declared numbers have to be restated in the schedule's terms, because the macro and the real
+schedule agree in total but not line by line. The first turn takes the whole working stock out of the
+inventory and every later turn replaces one turn of decay, so the loop withdraws
+`working + (turns-1)·decay` — and only what the inventory actually holds can be declared as taken,
+with the rest carried by the reported shortage. That distinction was found by the oracle, which
+rejected a plan that extracted ten units from a stock of eight.
+
 ## Gates
 
 The corpus moves `cycle/self-growth` and `cycle/conversion-ring` from declared limitations
@@ -213,7 +243,17 @@ to required — `required supported=45/45`, `limitation cases supported but not 
 shortage is pinned. The refill path must complete, which is what proves a reported seed is
 both necessary and sufficient.
 
-The two catalyst loops stay declared limitations until the component arithmetic lands.
-A declared limitation is a promise the opposite way: the gate asserts the planner must
-**not** claim them, so neither the over-report above nor a premature activation can pass
-unnoticed.
+The two catalyst loops are claimed as well, so the corpus has no declared limitations left:
+`required supported=51/51 confirmed defects=0 limitation cases supported but not claimed=0/0`, with
+zero false positives and zero false negatives across all three material modes. Both are optimal on
+the missing mode — `overhead=1.000`, the exact witness — where the naive model would have reported
+eleven units against ten.
+
+Because the bucket is empty, `declaredLimitationsAreNeverCountedAsSupport` no longer has a case to
+run on. The refusal loop stays anyway, and the test that used to require a limitation to exist now
+requires that none does, so a limitation that reappears is a finding either way.
+
+ThunderboltV2 is optimal on 16 of the 17 missing-mode cases and eight times over on
+`cycle/self-growth`; RaishxCore is optimal on all 17. Claim level across the corpus is 34 complete and
+17 shortage for RaishxCore against 33 and 18 for the reference, the difference being self-growth at
+minimum stock, where the reference reports a shortage on a scenario that is feasible.

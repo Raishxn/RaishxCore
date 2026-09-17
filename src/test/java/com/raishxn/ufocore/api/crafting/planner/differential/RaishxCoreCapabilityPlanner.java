@@ -2,6 +2,7 @@ package com.raishxn.ufocore.api.crafting.planner.differential;
 
 import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.api.crafting.planner.CraftingPlan;
+import com.raishxn.ufocore.api.crafting.planner.FeedbackCyclePlanner;
 import com.raishxn.ufocore.api.crafting.planner.IterativeCraftingPlanner;
 import com.raishxn.ufocore.api.crafting.planner.PlanningCancellation;
 import com.raishxn.ufocore.api.crafting.planner.PlanningLimits;
@@ -62,11 +63,14 @@ public final class RaishxCoreCapabilityPlanner implements CapabilityPlanner {
         } catch (RaishxCoreSemanticModel.UnsupportedSemantics unsupported) {
             return Outcome.declined(unsupported.getMessage());
         }
-        PlanningResult<String> result = new IterativeCraftingPlanner<String>().plan(lowered.graph(),
+        FeedbackCyclePlanner<String> loops =
+                FeedbackCyclePlanner.analyse(lowered.graph(), lowered.target(), lowered.amount(),
+                        lowered.stock());
+        PlanningResult<String> result = new IterativeCraftingPlanner<String>().plan(loops.augmentedGraph(),
                 new PlanningRequest<>(lowered.target(), lowered.amount(), lowered.stock(), limits,
                         PlanningCancellation.NEVER));
         return switch (result.status()) {
-            case COMPLETE, MISSING_INGREDIENTS -> Outcome.planned(adapt(result.plan()));
+            case COMPLETE, MISSING_INGREDIENTS -> Outcome.planned(adapt(loops.expand(result.plan())));
             case TIMED_OUT -> Outcome.timedOut("planner deadline of " + limits.timeout() + " expired");
             case OPERATION_LIMIT -> Outcome.declined("operation budget exhausted");
             case DEPTH_LIMIT -> Outcome.declined("depth budget exhausted");
