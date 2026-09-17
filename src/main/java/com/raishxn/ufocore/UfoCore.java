@@ -1,6 +1,7 @@
 package com.raishxn.ufocore;
 
 import com.raishxn.ufocore.neoforge.crafting.Ae2PlannerBridge;
+import com.raishxn.ufocore.neoforge.crafting.PlannerDiagnosticsCommand;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
@@ -20,6 +21,7 @@ public final class UfoCore {
         NeoForge.EVENT_BUS.addListener(UfoCore::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(UfoCore::onServerStopping);
         NeoForge.EVENT_BUS.addListener(UfoCore::onServerTick);
+        NeoForge.EVENT_BUS.addListener(PlannerDiagnosticsCommand::register);
     }
 
     /**

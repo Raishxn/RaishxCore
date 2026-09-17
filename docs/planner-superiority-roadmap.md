@@ -746,6 +746,19 @@ Expor por comando/API e, depois, UI:
 Logs detalhados devem ser opt-in/rate-limited. Métricas não podem reter AEKeys,
 NBT ou referências à grid após lifecycle.
 
+**Estado em 2026-09-17:** a lista acima é o alvo, e o que existe hoje é um recorte dela.
+`/raishxcore planner` (nível 2) imprime uma linha JSON por planner vivo com revisão do
+snapshot, cache hit/miss, fila e workers, deduplicação, backpressure, estado do circuit
+breaker, contadores e histogramas da captura, e o último plano com operações, profundidade
+e tempo. O payload é só números: nenhum `AEKey`, NBT ou referência à grid sobrevive ao
+lifecycle, e o comando é opt-in por natureza. O relatório existia e estava testado e não
+tinha chamador nenhum, que é o mesmo que não existir.
+
+Falta o que é sobre a *decisão* e não sobre o custo: faltantes separados por
+consumível/seed/ferramenta, a rota escolhida e por quê, cortes de ciclo, e contagem de nós,
+arestas e SCCs do componente. O `gap do solver` fica sem sentido enquanto a Fase 4 não
+existir, e está registrado como tal lá.
+
 ## 14. Compatibilidade, API e rollout
 
 ### Compatibilidade AE2

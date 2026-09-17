@@ -14,6 +14,29 @@ import org.junit.jupiter.api.Test;
  */
 class PlannerDiagnosticsReportTest {
 
+    /**
+     * The command is the only thing that renders these payloads, so the rendering is tested here where
+     * the payload helper already lives. An empty list is a sentence rather than an empty reply, and the
+     * cap is stated instead of a long reply quietly stopping.
+     */
+    @Test void rendersOneJsonLinePerLivePlannerAndSaysWhatItLeftOut() {
+        assertEquals(java.util.List.of("raishxcore planner: no live planner"),
+                PlannerDiagnosticsCommand.render(java.util.List.of()));
+
+        var one = diagnostics(null, "idle");
+        var single = PlannerDiagnosticsCommand.render(java.util.List.of(one));
+        assertEquals(1, single.size());
+        assertTrue(single.getFirst().startsWith("{\"schema\":"), single.getFirst());
+
+        java.util.List<Ae2PlannerBridge.Diagnostics> many = new java.util.ArrayList<>();
+        for (int i = 0; i < PlannerDiagnosticsCommand.MAX_REPORTED + 3; i++) {
+            many.add(one);
+        }
+        var capped = PlannerDiagnosticsCommand.render(many);
+        assertEquals(PlannerDiagnosticsCommand.MAX_REPORTED + 1, capped.size());
+        assertEquals("raishxcore planner: 3 more live planner(s) not shown", capped.getLast());
+    }
+
     private static Ae2PlannerBridge.Diagnostics diagnostics(PlanningResult.Diagnostics plan, String status) {
         return new Ae2PlannerBridge.Diagnostics(7L, 3L, 4L, status, plan, 1, 5L, 2L, 0L, 2, 1, 0L, 0L,
                 "CLOSED", 0, 0, 0L, 9L, 0L, 12, 1, 2048L, 0L, 1_500_000L,

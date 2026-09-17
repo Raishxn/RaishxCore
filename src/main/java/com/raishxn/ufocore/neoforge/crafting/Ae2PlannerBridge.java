@@ -526,6 +526,18 @@ public final class Ae2PlannerBridge {
         ACTIVE.remove(this);
     }
 
+    /**
+     * Diagnostics of every live planner. Only the payloads leave, never the bridges: the report is a
+     * bag of numbers, and a caller that held a bridge could hold a grid through it.
+     */
+    public static List<Diagnostics> activeDiagnostics() {
+        List<Diagnostics> all = new ArrayList<>(ACTIVE.size());
+        for (Ae2PlannerBridge bridge : ACTIVE) {
+            all.add(bridge.diagnostics());
+        }
+        return all;
+    }
+
     public static void cancelForPlayer(UUID playerId) {
         for (Ae2PlannerBridge bridge : ACTIVE) {
             bridge.requests.cancelOwner(playerId);

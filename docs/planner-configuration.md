@@ -43,6 +43,20 @@ reason recorded in the status. Exceeding a worker deadline or mathematical bound
 after submission completes the returned future exceptionally; it is never silently
 retried with different semantics.
 
+## Diagnostics
+
+`/raishxcore planner` prints one JSON line per live planner: revision, cache hits and
+misses, status, the last plan's operation count and elapsed time, queue and worker
+counts, backpressure and circuit-breaker state, capture counters and byte ceilings,
+and the capture histograms. It needs permission level 2, which is the same level as
+most operator diagnostics, and it is deliberately a command rather than a background
+log: nothing is written unless somebody asks.
+
+The payload is a bag of numbers. It holds no `AEKey`, no NBT and no reference to the
+grid, so a line captured now cannot keep a network alive after its lifecycle ends.
+At most eight planners are printed and the remainder is counted rather than silently
+dropped.
+
 Backpressure is isolated per grid, so one busy network cannot consume every
 global queue slot. A circuit breaker also isolates repeated failures from one
 grid. Lifecycle cancellation and graph revision changes reset that circuit;
