@@ -435,6 +435,9 @@ public final class IterativeCraftingPlanner<K> {
                     : ceil(required, pattern.outputAmount(key));
             UfoAmount capacity = runs;
             BigInteger deficit = BigInteger.ZERO;
+            // Only built when a weight was actually declared, so the ordinary request never pays for it.
+            Map<K, Long> weights = budget.request.missingWeights();
+            BigInteger weighted = weights.isEmpty() ? null : BigInteger.ZERO;
             BigInteger inputCost = BigInteger.ZERO;
             BigInteger leafCost = BigInteger.ZERO;
             boolean leafKnown = true;
@@ -467,7 +470,12 @@ public final class IterativeCraftingPlanner<K> {
                     capacity = capacity.min(input.durable()
                             ? multiply(carriers, UfoAmount.of(input.uses())) : carriers);
                 }
-                deficit = deficit.add(needed.subtractClamped(available).asBigInteger());
+                BigInteger gap = needed.subtractClamped(available).asBigInteger();
+                deficit = deficit.add(gap);
+                if (weighted != null && gap.signum() != 0) {
+                    weighted = weighted.add(gap.multiply(BigInteger.valueOf(weights.getOrDefault(
+                            input.key(), 1L))));
+                }
                 inputCost = inputCost.add(needed.asBigInteger());
                 rank = Math.max(rank, ranks.getOrDefault(input.key(), Integer.MAX_VALUE));
                 BigInteger inputLeaf = leafCosts.get(input.key());
@@ -480,7 +488,11 @@ public final class IterativeCraftingPlanner<K> {
             }
             if (cycle) continue;
             BigInteger routeLeafCost = leafKnown ? leafCost : null;
-            options.add(new Candidate<>(pattern, runs, deficit, inputCost, rank, routeLeafCost));
+            // The same slot carries whichever shortage measure the request asked for: units when
+            // nothing was weighted, weighted units when something was. It is one field either way, so
+            // a request without weights allocates exactly what it allocated before.
+            BigInteger ranking = weighted == null ? deficit : weighted;
+            options.add(new Candidate<>(pattern, runs, ranking, inputCost, rank, routeLeafCost));
             if (!capacity.isZero() && capacity.compareTo(runs) < 0) {
                 options.add(new Candidate<>(pattern, capacity, BigInteger.ZERO, inputCost, rank,
                         routeLeafCost));

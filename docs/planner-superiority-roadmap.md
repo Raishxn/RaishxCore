@@ -391,6 +391,13 @@ Timeout do solver deve retornar o melhor plano **já validado** ou `DECLINE`;
 nunca um vetor parcial. Não misturar metade do fast path com metade de outro
 backend sem replay global final.
 
+Um objetivo da lista já vale fora do solver: faltantes **ponderados**. A API aceita pesos inteiros por
+chave (`PlanningRequest.missingWeights`) e o planner ordena rotas por faltante ponderado em vez de
+contagem de unidades. Peso um não é armazenado, então um request sem pesos percorre exatamente o
+caminho de antes — a alocação no caso de conflito do benchmark é byte a byte a mesma. O caso
+`multi-dag/weighted-shortage` fixa isso: duas rotas idênticas em unidades, separadas só pelo peso,
+e o relatório passou de nomear o material 100 vezes mais caro para nomear o barato.
+
 **Estado:** não iniciado como solver. O que existe é o adaptador de ciclos da Fase 2, que resolve a
 aritmética de um componente mas não otimiza entre rotas, e o backtracking local do planner
 iterativo. Nenhum dos dois reivindica o ótimo global, e o doc de classe do `IterativeCraftingPlanner`

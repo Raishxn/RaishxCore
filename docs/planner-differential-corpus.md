@@ -75,9 +75,9 @@ simulated residue with the declared one. It proves, per case:
 
 ## Corpus layout
 
-20 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 60 cases.
+21 groups, each in `MISSING`, `MINIMUM` and `UNBOUNDED`: 63 cases.
 
-Representable today and therefore `REQUIRED`, 60 cases:
+Representable today and therefore `REQUIRED`, 63 cases:
 
 | Group | Cases |
 | --- | --- |
@@ -86,6 +86,7 @@ Representable today and therefore `REQUIRED`, 60 cases:
 | `multi-dag/sibling-routes` | two viable routes with a shared material and two minimum witnesses |
 | `multi-dag/fibonacci-depth12` | two routes per level, the frontier is minimal |
 | `multi-dag/greedy-trap` | route ordering trap at the reference scale of 32 conflicts |
+| `multi-dag/weighted-shortage` | two routes identical in units, told apart only by weight |
 | `batching/multi-output` | whole-batch rounding with a deterministic coproduct |
 | `byproduct/shared-coproduct` | one coproduct produced by two routes |
 | `byproduct/feeds-later-stage` | coproduct consumed by a later stage |
@@ -132,6 +133,22 @@ These must never be presented as the reference suite's own results:
 - the reference suite's `PARTIALLY_SUPPORTED` and `UNKNOWN` outcomes are represented as
   `SUPPORTED` with a recorded `missingOverhead` greater than one, because the required taxonomy has
   exactly eight classes.
+
+## Weighted shortages
+
+Weights are how the corpus says that one missing unit is worse than another, and `missingOverhead`
+has always been weighted — the witness is the cheapest weighted shortage and the ratio is against
+that. Until now no case declared any, so every weight was one and the machinery was never exercised.
+
+`multi-dag/weighted-shortage` exercises it. Two routes reach the target, each leaving exactly one
+unit missing, so the unit count cannot tell them apart, and the valuable route is named so that it
+sorts first. The report used to name the material worth a hundred times more, at an overhead of
+`100.0` against a minimum of one; it now names the cheap one, at `1.000`.
+
+The engine takes whole-number weights rather than fractions, so the comparison stays exact and the
+plan stays reproducible, and a weight of one is not stored at all. That last part is what keeps the
+promise that a request declaring no weights behaves exactly as it did before weights existed: on the
+benchmark's own conflict case the allocation is byte-identical either way.
 
 ## Scale
 
@@ -199,7 +216,7 @@ why the assertions are on deterministic invariants and the benchmark gates the n
 
 ## Shortage quality
 
-Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 20 of
+Every missing-mode case now reports exactly the known minimum (`missingOverhead = 1.000`), all 21 of
 them, so the frontier is asserted rather than merely printed. `multi-dag/fibonacci-depth12/missing`
 used to be the exception at 6.857, matching what the reference standard documents for its own
 multi-route Fibonacci case; the bottom-up leaf-demand pass closed it, and the case is asserted now.

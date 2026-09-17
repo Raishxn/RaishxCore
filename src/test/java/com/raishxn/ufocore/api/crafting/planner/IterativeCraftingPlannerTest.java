@@ -356,6 +356,32 @@ class IterativeCraftingPlannerTest {
         assertEquals(amount(0), result.plan().quality().overproducedUnits());
     }
 
+    /**
+     * Two routes, one missing unit each, so the unit count cannot tell them apart and the identifier
+     * used to decide. Weight is what says which shortage is worth avoiding, and without it the plan
+     * could ask for the valuable material to be supplied when the cheap one would have done.
+     */
+    @Test void prefersTheShortageThatWeighsLess() {
+        var gold = pattern("a-gold", Map.of("gold", amount(1)), Map.of("widget", amount(1)));
+        var cheap = pattern("b-cheap", Map.of("cheap", amount(1)), Map.of("widget", amount(1)));
+        var request = new PlanningRequest<>("widget", amount(1), Map.of());
+
+        var unweighted = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(gold, cheap)),
+                request);
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, unweighted.status());
+        assertTrue(unweighted.plan().missing().containsKey("gold"),
+                () -> "the identifier decides when nothing is weighted: " + unweighted.plan().missing());
+
+        var weighted = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(gold, cheap)),
+                new PlanningRequest<>("widget", amount(1), Map.of(), request.limits(),
+                        PlanningCancellation.NEVER, Map.of("gold", 100L)));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, weighted.status());
+        assertEquals(amount(1), weighted.plan().missing().get("cheap"),
+                () -> "the cheap material is the one worth leaving short: " + weighted.plan().missing());
+        assertFalse(weighted.plan().missing().containsKey("gold"));
+    }
+
     private static CraftingPattern<String> emitted(String id, Map<String, UfoAmount> inputs,
                                                     Map<String, UfoAmount> emittedInputs,
                                                     Map<String, UfoAmount> outputs) {

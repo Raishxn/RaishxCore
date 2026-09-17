@@ -70,6 +70,7 @@ public final class CapabilityCorpus {
         addConversionRing(scenarios);
         addSurplusSecondaryDemand(scenarios);
         addSecondaryThroughCatalyst(scenarios);
+        addWeightedShortage(scenarios);
         addChanceRoute(scenarios);
         addSelfGrowth(scenarios);
         addRawFeedbackLoop(scenarios);
@@ -554,8 +555,69 @@ public final class CapabilityCorpus {
                                     List<Map<String, UfoAmount>> minimalMissing,
                                     Set<CapabilitySemantics> semantics, CapabilityExpectation expectation,
                                     Function<Map<String, UfoAmount>, CapabilityGraph> refill) {
+        addScenario(out, id, family, scale, mode, graph, target, amount, feasible, minimalMissing,
+                Map.of(), semantics, expectation, refill);
+    }
+
+    private static void addScenario(List<CapabilityScenario> out, String id, CapabilityFamily family,
+                                    int scale, CapabilityMaterialMode mode, CapabilityGraph graph,
+                                    String target, UfoAmount amount, boolean feasible,
+                                    List<Map<String, UfoAmount>> minimalMissing,
+                                    Map<String, Double> weights,
+                                    Set<CapabilitySemantics> semantics, CapabilityExpectation expectation,
+                                    Function<Map<String, UfoAmount>, CapabilityGraph> refill) {
         out.add(new CapabilityScenario(id, family, mode, scale, graph, target, amount, feasible,
-                minimalMissing, Map.of(), minimalMissing.size() == 1, semantics, expectation, refill));
+                minimalMissing, weights, minimalMissing.size() == 1, semantics, expectation, refill));
+    }
+
+    /**
+     * The same three material modes, with weights declared. A group only needs this when the cheapest
+     * thing to leave short in units is not the cheapest to leave short in value.
+     */
+    private static void weightedThreeModes(List<CapabilityScenario> out, String id,
+                                           CapabilityFamily family, int scale, String target,
+                                           UfoAmount amount, Map<String, UfoAmount> minimum,
+                                           Map<String, UfoAmount> starved,
+                                           List<Map<String, UfoAmount>> minimalMissing,
+                                           Map<String, Double> weights,
+                                           Set<CapabilitySemantics> semantics,
+                                           CapabilityExpectation expectation,
+                                           Function<Map<String, UfoAmount>, CapabilityGraph> factory) {
+        addScenario(out, id, family, scale, CapabilityMaterialMode.MISSING, factory.apply(starved), target,
+                amount, false, minimalMissing, weights, semantics, expectation,
+                supplied -> factory.apply(merge(starved, supplied)));
+        addScenario(out, id, family, scale, CapabilityMaterialMode.MINIMUM, factory.apply(minimum), target,
+                amount, true, List.of(), weights, semantics, expectation,
+                supplied -> factory.apply(merge(minimum, supplied)));
+        LinkedHashMap<String, UfoAmount> unbounded = new LinkedHashMap<>();
+        minimum.keySet().forEach(key -> unbounded.put(key, UNBOUNDED));
+        addScenario(out, id, family, scale, CapabilityMaterialMode.UNBOUNDED, factory.apply(unbounded),
+                target, amount, true, List.of(), weights, semantics, expectation,
+                supplied -> factory.apply(merge(unbounded, supplied)));
+    }
+
+    /**
+     * Two routes to the same key, one missing unit each, and the cheaper material named so its route
+     * sorts first. In units the two are identical, so the identifier decided, and the plan could ask
+     * for the valuable material to be supplied when the cheap one would have done. The weights are what
+     * tells the two apart, and nothing else can.
+     */
+    private static void addWeightedShortage(List<CapabilityScenario> out) {
+        Map<String, UfoAmount> minimum = amounts(Map.of("cheap", 1L, "gold", 1L));
+        weightedThreeModes(out, "multi-dag/weighted-shortage", CapabilityFamily.MULTI_DAG, 2, "widget",
+                UfoAmount.ONE, minimum, Map.of(),
+                List.of(amounts(Map.of("cheap", 1L)), amounts(Map.of("gold", 1L))),
+                Map.of("cheap", 1.0D, "gold", 100.0D), DAG_MULTI_ROUTE,
+                CapabilityExpectation.REQUIRED, CapabilityCorpus::weightedShortageRoutes);
+    }
+
+    private static CapabilityGraph weightedShortageRoutes(Map<String, UfoAmount> stock) {
+        List<CapabilityPattern> patterns = List.of(
+                CapabilityPattern.of("widget-a-gold", List.of(input("gold", 1)),
+                        List.of(primary("widget", 1))),
+                CapabilityPattern.of("widget-b-cheap", List.of(input("cheap", 1)),
+                        List.of(primary("widget", 1))));
+        return graph(patterns, stock);
     }
 
     private static CapabilityOutput primary(String key, long amount) {

@@ -10,6 +10,7 @@ import com.raishxn.ufocore.api.crafting.planner.PlanningRequest;
 import com.raishxn.ufocore.api.crafting.planner.PlanningResult;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -68,7 +69,7 @@ public final class RaishxCoreCapabilityPlanner implements CapabilityPlanner {
                         lowered.stock());
         PlanningResult<String> result = new IterativeCraftingPlanner<String>().plan(loops.augmentedGraph(),
                 new PlanningRequest<>(lowered.target(), lowered.amount(), lowered.stock(), limits,
-                        PlanningCancellation.NEVER));
+                        PlanningCancellation.NEVER, weights(scenario)));
         return switch (result.status()) {
             case COMPLETE, MISSING_INGREDIENTS -> Outcome.planned(adapt(loops.expand(result.plan())));
             case TIMED_OUT -> Outcome.timedOut("planner deadline of " + limits.timeout() + " expired");
@@ -76,6 +77,26 @@ public final class RaishxCoreCapabilityPlanner implements CapabilityPlanner {
             case DEPTH_LIMIT -> Outcome.declined("depth budget exhausted");
             case CANCELLED -> Outcome.declined("planning cancelled");
         };
+    }
+
+    /**
+     * The corpus may declare fractional weights; the engine takes exact integers so its comparison
+     * stays exact and its plan reproducible. A weight that is not a whole number is a modelling
+     * mistake rather than something to round away, so it is refused rather than truncated.
+     */
+    private static Map<String, Long> weights(CapabilityScenario scenario) {
+        Map<String, Long> weights = new LinkedHashMap<>();
+        scenario.missingWeights().forEach((key, weight) -> {
+            long exact = Math.round(weight);
+            if (Math.abs(weight - exact) > 1e-9) {
+                throw new IllegalArgumentException(
+                        "missing weight for " + key + " is not a whole number: " + weight);
+            }
+            if (exact > 1L) {
+                weights.put(key, exact);
+            }
+        });
+        return weights;
     }
 
     /** Converts the public plan into the neutral corpus view without narrowing quantities. */

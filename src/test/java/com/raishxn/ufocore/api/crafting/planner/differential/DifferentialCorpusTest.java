@@ -61,7 +61,10 @@ class DifferentialCorpusTest {
             // request: eight ore, not something discounted by the odds of the other route.
             "probabilistic/chance-route",
             "byproduct/surplus-secondary-demand",
-            "catalyst/secondary-through-catalyst");
+            "catalyst/secondary-through-catalyst",
+            // In units the two routes are identical, so only the weight says which shortage is worth
+            // avoiding. Without it the report asked for the material worth a hundred times more.
+            "multi-dag/weighted-shortage");
 
     private static DifferentialHarness.Report report;
 
@@ -81,8 +84,8 @@ class DifferentialCorpusTest {
         for (DifferentialHarness.Entry entry : report.entries()) {
             modes.computeIfAbsent(entry.id(), ignored -> new LinkedHashSet<>()).add(entry.mode());
         }
-        assertEquals(20, modes.size());
-        assertEquals(60, report.entries().size());
+        assertEquals(21, modes.size());
+        assertEquals(63, report.entries().size());
         modes.forEach((id, present) -> assertEquals(Set.of(CapabilityMaterialMode.values()), present,
                 () -> id + " must run in every material mode"));
     }
@@ -108,7 +111,7 @@ class DifferentialCorpusTest {
         // a key that is being expanded, and the leaf-cost pass already leaves keys on a cycle out of
         // the cost map rather than failing, so the ring was a safe decline that turned out to be a
         // capability the engine had all along and never claimed.
-        assertEquals(60, report.supportedRequired());
+        assertEquals(63, report.supportedRequired());
     }
 
     @Test void noFalsePositiveAndNoEngineErrorAnywhereInTheCorpus() {
@@ -117,7 +120,7 @@ class DifferentialCorpusTest {
         assertEquals(0L, counts.get(CapabilityClassification.ENGINE_ERROR), report::render);
         assertEquals(0L, counts.get(CapabilityClassification.NON_COOPERATIVE_TIMEOUT), report::render);
         assertEquals(0L, counts.get(CapabilityClassification.ENGINE_TIMEOUT), report::render);
-        assertEquals(60L, counts.values().stream().mapToLong(Long::longValue).sum());
+        assertEquals(63L, counts.values().stream().mapToLong(Long::longValue).sum());
     }
 
     @Test void declaredLimitationsAreNeverCountedAsSupport() {
