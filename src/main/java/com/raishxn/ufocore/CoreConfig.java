@@ -1,5 +1,7 @@
 package com.raishxn.ufocore;
 
+import com.raishxn.ufocore.api.crafting.planner.MissingWeightPolicy;
+import java.util.List;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 /**
@@ -86,6 +88,17 @@ public final class CoreConfig {
             .comment("Time an unhealthy grid delegates directly to AE2 before one recovery probe.")
             .defineInRange("planner.circuitBreaker.cooldownMillis",
                     DEFAULT_POLICY.circuitCooldownMillis(), 100, 300_000);
+    private static final ModConfigSpec.IntValue MISSING_WEIGHT_MULTIPLIER = BUILDER
+            .comment("Scales every missing weight a consumer registered through the Core planner API.",
+                    "A value above one makes each declared shortage that many times more expensive, so a",
+                    "pack can disagree with an addon without recompiling either. One leaves weights untouched.")
+            .defineInRange("planner.missingWeights.multiplier", 1, 1, 1_000_000);
+    private static final ModConfigSpec.ConfigValue<List<? extends String>> MISSING_WEIGHT_OVERRIDES = BUILDER
+            .comment("Per-key missing-weight multipliers, written as \"<serialized-key>=<multiplier>\".",
+                    "An entry replaces planner.missingWeights.multiplier for that key, and a key no consumer",
+                    "registered can still be weighted this way.")
+            .defineListAllowEmpty("planner.missingWeights.overrides", List.of(), () -> "example:key=2",
+                    MissingWeightPolicy::isValidOverride);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 
@@ -118,6 +131,16 @@ public final class CoreConfig {
                 SNAPSHOT_CACHE_BYTES.get(), SNAPSHOT_SLICE_MILLIS.get(), SNAPSHOT_SLICE_EDGES.get(),
                 SNAPSHOT_TICK_BUDGET_MILLIS.get(), MAX_PENDING_CAPTURES.get(),
                 MAX_IN_FLIGHT_PER_GRID.get(), CIRCUIT_FAILURE_THRESHOLD.get(), CIRCUIT_COOLDOWN_MILLIS.get());
+    }
+
+    /**
+     * Missing-weight policy read from {@code core.toml}. Before the file loads (unit tests, early
+     * startup) it is the unconfigured policy, which is exactly the path taken before weights existed.
+     */
+    public static MissingWeightPolicy missingWeightPolicy() {
+        if (!SPEC.isLoaded()) return MissingWeightPolicy.NONE;
+        return new MissingWeightPolicy(MISSING_WEIGHT_MULTIPLIER.get(),
+                MissingWeightPolicy.parseOverrides(MISSING_WEIGHT_OVERRIDES.get()));
     }
 
     public record PlannerPolicy(int workers, int queueCapacity, int timeoutMillis, long maxOperations,

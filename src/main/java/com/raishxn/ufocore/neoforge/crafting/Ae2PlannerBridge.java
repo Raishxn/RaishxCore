@@ -399,7 +399,10 @@ public final class Ae2PlannerBridge {
         // times over the same graph, and recognising a feedback loop is a pass over every pattern.
         var loops = FeedbackCyclePlanner.analyse(snapshot.graph(), snapshot.target(),
                 UfoAmount.of(amount), stock);
-        var full = attempt(snapshot, stock, amount, started, generation, policy, loops);
+        // Read once per request: the operator policy scales what consumers registered, and with nothing
+        // registered or configured this is the constant empty map, so the unweighted path is untouched.
+        Map<String, Long> missingWeights = CoreConfig.missingWeightPolicy().effective();
+        var full = attempt(snapshot, stock, amount, started, generation, policy, loops, missingWeights);
         if (full.status() == PlanningResult.Status.COMPLETE) return adapt(snapshot, full);
         if (strategy == CalculationStrategy.CRAFT_LESS) {
             long successful = 0;
@@ -407,7 +410,8 @@ public final class Ae2PlannerBridge {
             for (long increment = Long.highestOneBit(amount); increment > 0; increment /= 2) {
                 if (increment >= amount - successful) continue;
                 long test = successful + increment;
-                var candidate = attempt(snapshot, stock, test, started, generation, policy, loops);
+                var candidate = attempt(snapshot, stock, test, started, generation, policy, loops,
+                        missingWeights);
                 if (candidate.status() == PlanningResult.Status.COMPLETE) { successful = test; best = candidate; }
             }
             if (best != null) return adapt(snapshot, best);
@@ -418,7 +422,8 @@ public final class Ae2PlannerBridge {
     private PlanningResult<String> attempt(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
                                            long amount, long started, long generation,
                                            CoreConfig.PlannerPolicy policy,
-                                           FeedbackCyclePlanner<String> loops) throws TimeoutException {
+                                           FeedbackCyclePlanner<String> loops,
+                                           Map<String, Long> missingWeights) throws TimeoutException {
         long timeoutNanos = Duration.ofMillis(policy.timeoutMillis()).toNanos();
         long remaining = timeoutNanos - (System.nanoTime() - started);
         if (remaining <= 0) throw new TimeoutException("RaishxCore planning deadline");
@@ -426,7 +431,7 @@ public final class Ae2PlannerBridge {
                 Duration.ofNanos(remaining), policy.checkpointInterval());
         var result = new IterativeCraftingPlanner<String>().plan(loops.augmentedGraph(),
                 new PlanningRequest<>(snapshot.target(), UfoAmount.of(amount), stock, limits,
-                        PlanningCancellation.NEVER));
+                        PlanningCancellation.NEVER, missingWeights));
         if (statusGeneration == generation) {
             lastDiagnostics = result.diagnostics();
             lastStatus = result.status().name();
