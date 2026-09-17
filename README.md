@@ -30,6 +30,9 @@ development and release setup.
 The ordered foundation work is tracked in [docs/roadmap.md](docs/roadmap.md).
 Planner limits and restart semantics are documented in
 [docs/planner-configuration.md](docs/planner-configuration.md).
+The detailed capability, differential-testing and verified-superiority plan is
+documented in
+[docs/planner-superiority-roadmap.md](docs/planner-superiority-roadmap.md).
 
 The planner switch is a NeoForge **COMMON** config (instance-wide, not a synced
 per-world server config), read for each new request. Disabling it delegates new

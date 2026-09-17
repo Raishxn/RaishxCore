@@ -1,0 +1,700 @@
+# Roadmap técnico — RaishxCore Planner além do Thunderbolt V2
+
+## 1. Objetivo e regra de honestidade
+
+O objetivo é construir um planner de autocrafting para AE2 que seja um
+**superset semântico verificável** do Thunderbolt V2 e que, ao mesmo tempo,
+tenha impacto menor e previsível no servidor, quantidades exatas, diagnóstico
+melhor e integração sustentável com as versões suportadas do AE2.
+
+Este documento não declara que o objetivo já foi atingido. A expressão
+“melhor que o Thunderbolt V2” só poderá ser usada depois que todos os gates da
+seção 15 passarem contra o mesmo commit fixado do Thunderbolt, no mesmo Java,
+hardware, heap, warmup, dataset e política de timeout.
+
+São proibidas comparações que:
+
+- executem um planner pela API pública e o outro por um atalho de teste;
+- reduzam a escala apenas para o RaishxCore;
+- ignorem `DECLINE`, timeout, faltantes incorretos ou plano sem replay;
+- comparem somente média, sem p50/p95/p99, memória e impacto no server thread;
+- tratem fallback do AE2 como sucesso do RaishxCore;
+- misturem resultados de algoritmos diferentes dentro de uma única tentativa;
+- contem um plano rápido, mas semanticamente incorreto, como vitória.
+
+## 2. Baseline confirmado em 2026-09-16
+
+### 2.1 Pontos já fortes no RaishxCore
+
+- quantidades `UfoAmount` baseadas em `BigInteger`, sem teto artificial de
+  `long` no modelo matemático;
+- planner iterativo, sem estouro de stack em cadeia com profundidade 20.000;
+- batching exato, múltiplos outputs e subprodutos determinísticos básicos;
+- replay de conservação em testes e benchmarks;
+- snapshots imutáveis e cacheados por revisão da grid;
+- deduplicação de requisições equivalentes em andamento;
+- cancelamento por revisão, unload/alteração da grid, logout, desativação do
+  planner e parada do servidor;
+- workers, fila, timeout, operações, profundidade, snapshot e memória
+  configuráveis;
+- backpressure, limite de requisições simultâneas e circuit breaker por grid;
+- fallback conservador: a captura AE2 recusa semântica que ainda não consegue
+  representar, em vez de produzir plano sabidamente errado.
+
+### 2.2 Limites atuais do RaishxCore
+
+O modelo público `CraftingPattern` representa mapas exatos de inputs/outputs e
+um subconjunto de outputs craftáveis. A ponte AE2 atualmente recusa:
+
+- substituição/fuzzy e alternativas dentro do mesmo ingrediente;
+- remainder/container retornável;
+- feedback entre input e output, incluindo catalisadores;
+- emitters (`canEmitFor`);
+- qualquer input que não tenha exatamente uma opção válida;
+- padrões sem definição estável.
+
+O algoritmo possui backtracking local limitado, mas ainda não resolve de forma
+global todos os conflitos de múltiplas rotas, ciclos, ferramentas reutilizáveis
+e estoques compartilhados. A captura do grafo alcançável ainda é monolítica no
+server thread e pode consumir até o orçamento configurado antes do trabalho
+assíncrono começar.
+
+### 2.3 Baseline do Thunderbolt V2 a superar
+
+O corpus de referência do Thunderbolt declara 11 famílias de grafo e 33 casos
+de materiais (`MISSING`, `MINIMUM`, `UNBOUNDED`). A baseline atual exige
+`SUPPORTED` em todos eles. Entre as capacidades cobertas estão:
+
+- DAG de rota única, inclusive Fibonacci profundo;
+- DAG com múltiplas rotas e armadilhas para escolha gulosa;
+- ciclos de conversão e corte seguro de ciclo autoexpansivo;
+- catalisador retornado diretamente;
+- feedback conservativo e feedback com perda/seed inicial;
+- ferramentas com número finito de usos;
+- ingrediente fuzzy roteado para variante real reutilizável;
+- replay de viabilidade e validação da lista de faltantes;
+- backend V2 e candidato CP-SAT independentes;
+- isolamento, timeout e quarentena de candidato não cooperativo;
+- seleção determinística entre múltiplos engines e fallback integral.
+
+O Thunderbolt já está à frente do RaishxCore em cobertura semântica. O
+RaishxCore só poderá alegar superioridade depois de fechar essa diferença e
+vencer nos gates adicionais abaixo.
+
+## 3. Definição objetiva de “muito melhor”
+
+Haverá três níveis de maturidade:
+
+### Nível A — paridade semântica
+
+- todos os 33 casos de referência do Thunderbolt retornam `SUPPORTED` pelo
+  caminho de produção do RaishxCore;
+- nenhum plano falha no replay de conservação;
+- nenhuma tentativa trava ou ignora cancelamento;
+- resultados são determinísticos entre ordens de registro e seeds de hash;
+- integração real com AE2 preserva a semântica representada no corpus puro.
+
+### Nível B — superioridade candidata
+
+Além do Nível A:
+
+- todos os casos adicionais do corpus Raishx passam;
+- faltantes são mínimos nos casos canônicos onde o Thunderbolt admite conjunto
+  válido, porém não mínimo;
+- quantidades acima de `Long.MAX_VALUE` funcionam do request ao plano puro;
+- captura é incremental/cooperativa e nunca monopoliza um tick;
+- grids lentas, hostis ou enormes não degradam grids saudáveis;
+- diagnóstico explica rota, corte, faltante, recusa e orçamento consumido;
+- matriz de compatibilidade passa na menor e maior versão suportada do AE2.
+
+### Nível C — superioridade comprovada
+
+Além do Nível B, no corpus diferencial congelado:
+
+- zero falso positivo e zero perda/dupe em unit tests e GameTests;
+- 100% das capacidades obrigatórias suportadas; capacidades opcionais têm
+  `DECLINE` explícito e testado, nunca erro silencioso;
+- p95 do tempo no server thread respeita o orçamento de 2 ms por tick por grid
+  na configuração de referência;
+- p99 não apresenta cauda descontrolada sob múltiplas grids;
+- mediana geométrica do tempo total é no máximo 75% da baseline Thunderbolt,
+  ou o RaishxCore vence pelo menos 80% dos cenários sem perder mais de 10% nos
+  restantes;
+- bytes alocados/operação são no máximo 80% da baseline no agregado, salvo
+  cenários `BigInteger` acima de `long`, que são relatados separadamente;
+- qualidade de faltantes nunca é pior e é estritamente melhor em pelo menos um
+  caso conhecido;
+- relatório reproduzível contém versões, commit hashes, ambiente, resultados
+  brutos e justificativa de qualquer exclusão.
+
+Os números de 75%, 80%, 10%, 80% e 2 ms são gates iniciais. Podem ser alterados
+antes do congelamento do corpus, com justificativa registrada; não podem ser
+afrouxados depois de ver um resultado desfavorável sem invalidar a comparação.
+
+## 4. Modelo semântico alvo
+
+O modelo simples de mapas deve evoluir para tipos explícitos. Nenhuma semântica
+especial será inferida apenas porque o mesmo recurso aparece em input/output.
+
+### 4.1 Identidade de recurso
+
+`PlanningKey` deve preservar:
+
+- tipo AE2: item, fluido e futuros tipos registrados;
+- ID de registro;
+- componentes/data components relevantes;
+- modo de comparação exato ou política de equivalência declarada;
+- serialização canônica, estável e limitada em tamanho;
+- conversão de bytes/unidades necessária pelo AE2.
+
+Chaves nativas não podem ser acessadas pelo worker. O snapshot publica somente
+valores imutáveis e adapters necessários para reconstruir o plano no thread
+apropriado.
+
+### 4.2 Inputs
+
+Cada `PatternInput` deve declarar uma das formas:
+
+- `Exact`: uma chave e quantidade exata consumida;
+- `Alternatives`: conjunto ordenado de opções válidas;
+- `Fuzzy`: chave lógica + política de matching + variantes capturadas;
+- `Reusable`: catalisador retornado sem desgaste;
+- `FiniteUse`: ferramenta/carrier com usos restantes e transformação após uso;
+- `Remainder`: recipiente ou recurso retornado por execução;
+- `External`: dependência satisfeita por emitter ou fonte virtual autorizada.
+
+Também deve carregar multiplicador, política de validação do AE2 e identidade
+do host/estoque quando duas opções não podem usar o mesmo item físico ao mesmo
+tempo.
+
+### 4.3 Outputs
+
+Cada `PatternOutput` deve declarar:
+
+- chave e quantidade exata;
+- papel: primário craftável, coproduto craftável, subproduto ou remainder;
+- garantia: determinístico ou probabilístico;
+- para probabilístico: distribuição e política de planejamento. O planner não
+  pode prometer ao crafting CPU um roll aleatório como saída garantida;
+- possibilidade de realimentar outras rotas no mesmo plano;
+- regra de arredondamento por execução, nunca após agregação indevida.
+
+### 4.4 Padrão compilado
+
+`CompiledPattern` deve conter:
+
+- ID canônico e handle de reconstrução separado;
+- prioridade AE2/provider e tie-break estável;
+- inputs e outputs normalizados;
+- outputs elegíveis como rota;
+- custo estático e estimativas de expansão;
+- flags de capacidade necessárias;
+- origem/provider para diagnóstico;
+- fingerprint de semântica usado na revisão/cache.
+
+### 4.5 Estoque
+
+O snapshot deve separar:
+
+- estoque consumível normal;
+- estoque reutilizável por host/rota;
+- usos de durabilidade disponíveis;
+- fontes emitíveis;
+- recursos já reservados por jobs concorrentes;
+- recursos virtuais/infinite explicitamente autorizados;
+- disponibilidade exata no início da tentativa.
+
+Nunca contar o mesmo recurso simultaneamente como consumível e reutilizável.
+
+## 5. Pipeline planejado
+
+### Fase 1 — captura incremental
+
+1. Registrar a revisão inicial da grid e do catálogo de padrões.
+2. Percorrer chaves/padrões em fatias com orçamento em nanos e número de arestas.
+3. Reagendar continuação para o tick seguinte quando o orçamento terminar.
+4. Cancelar se revisão, grid, jogador ou lifecycle mudar.
+5. Publicar o snapshot somente quando estiver completo e consistente.
+6. Nunca inserir snapshot parcial no cache.
+
+Alvo padrão: até 2 ms por grid/tick, com orçamento global adicional para impedir
+que muitas grids consumam 2 ms cada no mesmo tick.
+
+Uma alternativa futura é manter snapshot imutável por eventos de mutação. Ela
+só substitui a captura incremental depois que testes provarem que nenhum evento
+do AE2 deixa o índice obsoleto.
+
+### Fase 2 — normalização
+
+- agregar duplicatas sem perder papéis semânticos;
+- transformar remainders em arestas retornáveis explícitas;
+- construir índices output→rotas e input→consumidores;
+- calcular SCCs sobre outputs principais e laterais;
+- classificar componentes como DAG, ciclo de conversão, feedback conservativo,
+  feedback com perda, ciclo positivo ou ciclo desconhecido;
+- identificar conflitos de alternativas, fuzzy, durabilidade e estoque host;
+- produzir motivos estruturados de `DECLINE` para semântica não provada.
+
+### Fase 3 — solução rápida para regiões simples
+
+Usar o planner iterativo atual, depois de generalizado, para regiões que forem
+provadamente DAG e sem conflito global. Manter:
+
+- `BigInteger` ponta a ponta;
+- batching por teto de divisão;
+- consumo prévio de estoque;
+- reaproveitamento determinístico de coprodutos;
+- ordem estável de rotas;
+- backtracking local com orçamento explícito.
+
+O fast path nunca deve aceitar uma região só porque “parece simples”; a
+classificação deve provar que não há conflito global relevante.
+
+### Fase 4 — solver global limitado
+
+Regiões com múltiplas rotas compartilhando estoque exigem solução inteira
+global. Avaliar dois backends atrás do mesmo contrato:
+
+- solver inteiro próprio, determinístico e limitado para componentes pequenos;
+- backend CP-SAT opcional, se distribuição, plataforma e custo operacional
+  forem aceitáveis.
+
+Variáveis representam execuções inteiras de padrões. Restrições cobrem balanço
+de cada recurso, estoque, target, seed reutilizável, usos finitos e limites de
+rota. Ordem lexicográfica de objetivos:
+
+1. obter plano viável;
+2. minimizar faltantes ponderados;
+3. minimizar número total de execuções;
+4. minimizar sobreprodução determinística;
+5. respeitar prioridade dos providers;
+6. tie-break pelo ID canônico.
+
+Timeout do solver deve retornar o melhor plano **já validado** ou `DECLINE`;
+nunca um vetor parcial. Não misturar metade do fast path com metade de outro
+backend sem replay global final.
+
+### Fase 5 — ciclos e feedback
+
+- detectar SCCs considerando todos os outputs determinísticos;
+- cortar ciclos puramente recursivos sem seed e explicar o corte;
+- aceitar conversões reversíveis somente com orientação que preserve
+  viabilidade e não crie material;
+- provar feedback conservativo por estado interno;
+- para feedback com perda, separar consumo líquido da reserva mínima inicial;
+- recusar ciclos de ganho positivo no planner normal, salvo engine futuro
+  explicitamente autorizado para essa semântica;
+- proibir execuções negativas, fracionárias ou cancelamentos algébricos que não
+  correspondam a uma ordem executável;
+- construir uma agenda válida e replayar o seed passo a passo, não somente
+  validar o balanço final.
+
+### Fase 6 — fuzzy, alternatives e reutilizáveis
+
+- capturar as opções que o próprio `IPatternDetails.IInput` aceita;
+- preservar matching de componentes e política fuzzy do AE2;
+- alocar variantes físicas globalmente para impedir double-spend;
+- manter chave de host/rota para estoque reutilizável;
+- distinguir catalisador infinito, ferramenta retornada e ferramenta que perde
+  durabilidade;
+- modelar cadeia de dano e quantidade de usos por item;
+- validar remainder real com `getRemainingKey`;
+- retornar lista explicável de qual variante física foi escolhida.
+
+### Fase 7 — emitters e fontes externas
+
+- definir adapter explícito para `canEmitFor`;
+- capturar disponibilidade, limites e identidade da fonte sem levar live grid
+  ao worker;
+- distinguir emitter infinito de fornecedor limitado;
+- evitar materializar quantidades gigantes desnecessariamente;
+- marcar no plano o que será emitido e o que será extraído;
+- recusar fonte cuja estabilidade não possa ser garantida durante a execução.
+
+## 6. Planejamento versus execução
+
+Um plano matematicamente balanceado não basta. Antes da conversão para AE2:
+
+- replayar a agenda na ordem real de execução;
+- provar que cada passo possui inputs/seed naquele instante;
+- provar que nenhum estoque físico foi alocado duas vezes;
+- separar outputs prometidos de bônus probabilísticos;
+- validar que quantidades cabem nas fronteiras `long`/AE2 apenas no adapter;
+- retornar `DECLINE` quando a execução AE2 não puder representar o plano exato;
+- nunca truncar ou saturar `BigInteger` silenciosamente;
+- registrar checksum/fingerprint do snapshot usado no plano.
+
+Se a revisão mudar antes do commit, descartar o plano e reiniciar com snapshot
+novo. A fase futura de execução transacional deve usar
+`simulate -> reserve -> validate -> commit`, idempotency key e refund.
+
+## 7. Resultado e taxonomia de falhas
+
+Substituir o status pequeno atual por categorias que não escondam riscos:
+
+- `SUPPORTED_COMPLETE`;
+- `SUPPORTED_MISSING`;
+- `DECLINED_CAPABILITY`;
+- `DECLINED_BUDGET`;
+- `CANCELLED_EXTERNAL`;
+- `CANCELLED_REVISION`;
+- `TIMED_OUT_COOPERATIVE`;
+- `TIMED_OUT_QUARANTINED`;
+- `INVALID_SNAPSHOT`;
+- `INVALID_PLAN_REPLAY`;
+- `ENGINE_ERROR`;
+- `AE2_ADAPTER_UNREPRESENTABLE`.
+
+Falso positivo é defeito crítico: o engine aceitou e entregou plano inviável,
+faltantes errados ou conservação inválida. Falso negativo é defeito distinto:
+o engine recusou um caso que o modo diagnóstico consegue provar suportado.
+
+Cada falha deve carregar:
+
+- fase;
+- capability requerida;
+- grid/revisão sem expor dados sensíveis;
+- budgets consumidos;
+- padrão/chave responsável, quando seguro;
+- indicação de fallback e engine seguinte;
+- texto localizável para UI/comando.
+
+## 8. Multi-engine e fallback
+
+Criar um contrato público neutro semelhante a uma cadeia de candidatos, sem
+copiar implementação do Thunderbolt:
+
+- `check` barato e limitado;
+- `capture` imutável e limitado no thread correto;
+- `createSession` isolado;
+- tentativa completa pertencente a um único engine;
+- checkpoint cooperativo e deadline comum;
+- fechamento obrigatório da sessão;
+- fallback somente depois de descartar integralmente a tentativa anterior;
+- cancelamento externo encerra a cadeia, não tenta outro engine;
+- candidato não cooperativo entra em quarentena por grid/engine;
+- AE2 vanilla permanece fallback final configurável.
+
+O RaishxCore fast path, solver global e um possível CP-SAT devem aparecer como
+candidatos independentes quando suas semânticas/diagnósticos diferirem. Não
+atribuir ao fast path um plano finalizado por outro solver.
+
+## 9. Determinismo
+
+O mesmo snapshot e request devem gerar o mesmo resultado independente de:
+
+- ordem de iteração de `HashMap`/`HashSet`;
+- ordem de registro de providers equivalentes;
+- quantidade de workers;
+- timing de outras grids;
+- reinício da JVM;
+- seed aleatório do teste.
+
+Testar o mesmo corpus com ordens permutadas e chaves de hash opacas. O plano
+canônico deve comparar execuções, alocações, faltantes, agenda e motivo de
+recusa; tempo e contadores não entram na igualdade semântica.
+
+## 10. Corpus diferencial obrigatório
+
+### 10.1 Importar como especificação comportamental
+
+Recriar no RaishxCore, sem depender das classes de produção do Thunderbolt, os
+11 grupos/33 modos da suíte de referência:
+
+- single DAG disperso;
+- single DAG Fibonacci profundo;
+- multi-DAG com armadilha gulosa;
+- multi-DAG Fibonacci;
+- anel de conversão;
+- ciclo autoexpansivo cortado com segurança;
+- catalisador retornado;
+- feedback bruto conservativo;
+- feedback com perda e seed;
+- durabilidade finita;
+- variante fuzzy reutilizável.
+
+Cada cenário roda em `MISSING`, `MINIMUM` e `UNBOUNDED`, salvo exceções
+formalmente documentadas. A execução deve passar pela API de produção dos dois
+planners.
+
+### 10.2 Corpus adicional Raishx
+
+Adicionar pelo menos:
+
+- quantidades `Long.MAX_VALUE + 1`, `2^127` e decimal com centenas de dígitos;
+- cadeia linear 20.000 e 100.000, respeitando orçamento configurado;
+- grafo largo com 1k, 10k e 100k rotas;
+- diamond DAG com coproduto compartilhado;
+- output primário + múltiplos subprodutos determinísticos;
+- subproduto que satisfaz dependência posterior;
+- bônus probabilístico que nunca é prometido;
+- dois targets craftáveis do mesmo padrão;
+- alternatives com estoque compartilhado e conflito global;
+- fuzzy com componentes diferentes e política exata/fuzzy;
+- duas ferramentas danificadas com usos restantes distintos;
+- recipiente retornável encadeado;
+- catalisador compartilhado entre rotas concorrentes;
+- feedback conservativo com mais de um estado interno;
+- feedback com perda em múltiplas voltas;
+- ciclos cruzados entre três SCCs;
+- emitter infinito, emitter limitado e emitter instável recusado;
+- item + fluido no mesmo plano;
+- chave com componentes/NBT grande no limite e acima do limite;
+- mudança de revisão em captura, solução e antes do commit;
+- cancelamento em cada fase e a cada checkpoint relevante;
+- timeout cooperativo e engine deliberadamente não cooperativo;
+- grid unload/reload, split/merge e provider offline;
+- duas, oito e 32 grids concorrentes, incluindo uma grid hostil;
+- fila global cheia sem fallback explosivo no server thread;
+- deduplicação de requests iguais com cancelamento independente dos callers;
+- cache frio/quente, invalidação seletiva e ausência de snapshot parcial;
+- menor/maior versão AE2 suportada;
+- save/reload de job planejado e refund após receita desaparecer.
+
+### 10.3 Três modos e oráculos
+
+Para cada caso aplicável:
+
+- `MISSING`: provar inviabilidade e validar que adicionar os faltantes relatados
+  torna o caso viável;
+- `MINIMUM`: fornecer somente um conjunto mínimo conhecido;
+- `UNBOUNDED`: fornecer folhas em quantidade suficientemente grande.
+
+Oráculos obrigatórios:
+
+- replay passo a passo;
+- conservação por chave;
+- não negatividade do estoque em todos os passos;
+- target produzido na quantidade pedida;
+- execuções inteiras e não negativas;
+- outputs probabilísticos fora da promessa;
+- alocação física única de fuzzy/reutilizáveis;
+- conjunto de faltantes reexecutável;
+- comparação com mínimo conhecido quando computável;
+- determinismo sob permutações.
+
+## 11. Qualidade de faltantes
+
+Não basta dizer “faltam materiais”. O plano deve otimizar e explicar:
+
+- conjunto mínimo ou fronteira de soluções mínimas para corpus pequeno;
+- `missingOverhead = custo relatado / menor custo válido`;
+- pesos configuráveis apenas para diagnóstico, nunca escondendo unidades;
+- separação entre faltante consumível e seed/reutilizável;
+- nenhuma inclusão de subproduto probabilístico como material garantido;
+- replay automático após injetar exatamente os faltantes informados.
+
+Gate canônico: overhead 1,0 nos casos com ótimo conhecido. Em grafos grandes
+onde provar ótimo exceder o orçamento, retornar melhor conjunto validado junto
+de limite inferior, gap e motivo do encerramento.
+
+## 12. Performance e isolamento
+
+Medir separadamente:
+
+- tempo de `check`;
+- captura total e maior fatia por tick;
+- normalização/SCC;
+- fast path;
+- solver global;
+- replay;
+- conversão AE2;
+- tempo ponta a ponta;
+- bytes alocados e pico estimado/medido;
+- tamanho do snapshot/cache;
+- fila, wait time e ocupação de workers.
+
+Testar cold/warm cache, sucesso/faltante/decline/timeout e carga concorrente.
+O benchmark não deve executar dentro do server tick para medir algoritmo puro,
+mas deve existir GameTest/soak separado para medir impacto real no tick.
+
+Políticas:
+
+- orçamento global de captura por servidor;
+- orçamento e in-flight por grid;
+- fair queue/round-robin para evitar starvation;
+- limite de cache por bytes, não só por quantidade de entradas;
+- admissão anterior à alocação grande;
+- circuit breaker por grid e por engine;
+- nenhuma rejeição por fila pode criar pico maior via fallback síncrono;
+- métricas p50/p95/p99 e histogramas limitados em memória.
+
+## 13. Observabilidade e experiência do jogador
+
+Expor por comando/API e, depois, UI:
+
+- engine escolhido e cadeia tentada;
+- fase atual e tempo por fase;
+- revisão do snapshot;
+- nós, arestas, SCCs e rotas alternativas;
+- cache hit/miss, deduplicação e fila;
+- operações, backtracks e gap do solver;
+- razão exata de decline/fallback;
+- faltantes separados por consumível/seed/ferramenta;
+- cortes de ciclo e rota escolhida;
+- status do circuit breaker/quarentena;
+- impacto máximo observado no tick principal.
+
+Logs detalhados devem ser opt-in/rate-limited. Métricas não podem reter AEKeys,
+NBT ou referências à grid após lifecycle.
+
+## 14. Compatibilidade, API e rollout
+
+### Compatibilidade AE2
+
+- fixar range realmente testado;
+- CI na menor e maior versão suportada;
+- testes de contrato para cada accessor/mixin;
+- adapter por versão quando a API interna divergir;
+- kill-switch independente para planner, captura e CPU compartilhada;
+- falha de compatibilidade deve desativar o recurso com diagnóstico, não impedir
+  o servidor de iniciar, quando tecnicamente seguro.
+
+### Rollout
+
+1. modo shadow: RaishxCore calcula, replaya e compara, mas AE2 executa o plano
+   original;
+2. opt-in por servidor/grid para capacidades já certificadas;
+3. fallback obrigatório para semântica ainda não suportada;
+4. coleta de diagnóstico anonimizado/local, sem telemetria externa automática;
+5. default-on somente após soak e GameTests do modpack real;
+6. remoção de flags antigas apenas depois de uma janela de deprecação.
+
+## 15. Gates de aceitação
+
+### Gate P — paridade
+
+- [ ] 33/33 casos Thunderbolt `SUPPORTED` no RaishxCore.
+- [ ] Zero falso positivo, erro ou timeout não cooperativo.
+- [ ] Replay e determinismo aprovados.
+- [ ] Integração AE2 equivalente comprovada por GameTests.
+
+### Gate S — semântica superior
+
+- [ ] Corpus adicional completo aprovado.
+- [ ] `BigInteger` extremo aprovado sem truncamento.
+- [ ] Faltantes mínimos nos casos canônicos.
+- [ ] Probabilidade, emitters, remainder, fuzzy, durabilidade e feedback têm
+      contratos explícitos e testes.
+- [ ] Motivos de decline e falha são estruturados e localizáveis.
+
+### Gate O — operação superior
+
+- [ ] Captura incremental com fatia p95 ≤ 2 ms por grid/tick e orçamento global.
+- [ ] Multi-grid não apresenta starvation nem contaminação de circuit breaker.
+- [ ] Cancelamento/lifecycle em todas as fases.
+- [ ] Engine não cooperativo isolado sem bloquear AE2 ou nova grid.
+- [ ] Métricas p50/p95/p99, fila, cache e memória disponíveis.
+
+### Gate D — desempenho diferencial
+
+- [ ] Harness executa RaishxCore, Thunderbolt V2 e AE2 pelo caminho correto.
+- [ ] Ambiente e commits congelados no relatório.
+- [ ] Critérios do Nível C atendidos.
+- [ ] Benchmark é gate de CI com tolerância estatística documentada.
+
+### Gate R — release
+
+- [ ] Menor e maior AE2 suportado verdes.
+- [ ] UFO Future verde como consumidor real.
+- [ ] Soak com múltiplas grids e save real aprovado.
+- [ ] Migração/config/kill-switch documentados.
+- [ ] Relatório público diferencia fatos, limitações e capacidades opcionais.
+
+Somente após P + S + O + D + R será permitido marcar “superioridade
+comprovada”. Antes disso, a documentação deve usar “em desenvolvimento”,
+“paridade parcial” ou “candidato”.
+
+## 16. Sequência de implementação sugerida
+
+### R2.1 — especificação e harness
+
+- congelar corpus Thunderbolt e adapter diferencial;
+- criar replay/oráculo comum;
+- ampliar status e diagnóstico;
+- produzir relatório baseline dos três planners.
+
+### R2.2 — captura cooperativa
+
+- state machine incremental;
+- orçamento global/por grid;
+- cache por revisão e bytes;
+- cancelamento em todas as transições;
+- testes de mutação durante captura.
+
+### R2.3 — modelo semântico
+
+- novos tipos de input/output/estoque;
+- normalização e fingerprints;
+- adapters AE2 exatos;
+- manter fast path para padrões simples.
+
+### R2.4 — alternatives, fuzzy e remainder
+
+- matching capturado;
+- alocação física única;
+- recipientes retornáveis;
+- testes com componentes e fluidos.
+
+### R2.5 — catalisadores, durabilidade e feedback
+
+- estoque reutilizável;
+- usos finitos;
+- SCC e seeds;
+- replay de ordem executável.
+
+### R2.6 — solver global
+
+- conflitos multi-rota;
+- objetivo lexicográfico;
+- melhor plano validado sob budget;
+- comparação de backend próprio/CP-SAT.
+
+### R2.7 — multi-engine e contenção
+
+- sessões candidatas;
+- timeout cooperativo;
+- quarentena;
+- fallback integral e observável.
+
+### R2.8 — superioridade diferencial
+
+- otimização orientada por profiling;
+- gates estatísticos;
+- soak multi-grid;
+- relatório final e decisão de default-on.
+
+## 17. Riscos e decisões abertas
+
+- CP-SAT melhora cobertura, mas adiciona runtime nativo, tamanho e diferenças
+  de plataforma; decidir apenas após benchmark do solver próprio limitado.
+- Snapshot mantido por eventos é mais barato, mas arriscado se algum evento do
+  AE2 não for observado; captura incremental é o baseline seguro.
+- Otimizar faltantes pode competir com latência. O contrato deve permitir gap
+  explícito em grafos grandes, nunca lista aparentemente ótima sem prova.
+- Planejar quantidade `BigInteger` não significa que toda fronteira AE2 aceite
+  essa quantidade de uma vez; adapters devem particionar ou recusar claramente.
+- Probabilidade exige separar promessa de bônus. “Valor esperado” não pode
+  satisfazer pedido determinístico do crafting CPU.
+- Ciclos positivos podem ser válidos em mods específicos, mas habilitá-los no
+  planner comum cria risco de material infinito. Permanecem recusados até haver
+  engine e política próprios.
+- Superioridade deve ser revalidada quando Thunderbolt, AE2, Java ou o corpus
+  mudar. O relatório sempre nomeia a baseline exata comparada.
+
+## 18. Definition of Done de cada capability
+
+Uma capability só é considerada suportada quando possui:
+
+1. tipo/contrato público documentado;
+2. captura AE2 real, sem fixture exclusiva;
+3. unit tests puros em todos os modos aplicáveis;
+4. replay de conservação e execução ordenada;
+5. caso de faltante e diagnóstico;
+6. cancelamento e limite de custo;
+7. determinismo sob permutação;
+8. GameTest quando depende de comportamento do AE2/Minecraft;
+9. benchmark de custo e memória;
+10. entrada na matriz diferencial e documentação de limites.
+
+Ter código que “funciona em um exemplo” não atende esta definição.

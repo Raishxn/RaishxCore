@@ -24,6 +24,13 @@ green builds/GameTests and documentation matching the published code.
 
 ## Milestone 2 — planner hardening
 
+The complete semantic and differential plan is documented in
+[planner-superiority-roadmap.md](planner-superiority-roadmap.md). The target is
+not a favorable microbenchmark: RaishxCore must become a verified semantic
+superset of Thunderbolt V2, retain exact `BigInteger` quantities, reduce
+server-thread impact, improve missing-material quality and prove those claims
+against the same frozen corpus and environment.
+
 - [ ] Replace monolithic server-thread graph capture with incremental snapshots
       or cooperative capture budgeted across ticks.
 - [x] Deduplicate equivalent in-flight requests with independent caller futures.
@@ -37,10 +44,27 @@ green builds/GameTests and documentation matching the published code.
 - [ ] Make the benchmark a regression gate.
 - [ ] Run one differential capability/performance corpus against AE2 and
       Thunderbolt V2 before making comparative performance or quality claims.
+- [ ] Reproduce the Thunderbolt 11-group/33-case reference suite through both
+      planners' production entry points, including replay and material modes.
+- [ ] Model alternatives/fuzzy inputs, remainders, catalysts, finite
+      durability, emitters, probabilistic outputs and feedback SCCs explicitly.
+- [ ] Add a bounded global integer solver for multi-route conflicts while
+      retaining the iterative fast path for proven-simple DAGs.
+- [ ] Preserve `BigInteger` end to end and test quantities above `long`.
+- [ ] Return minimum canonical shortages, or an explicit bound/gap when the
+      optimum cannot be proven within budget.
+- [ ] Add isolated multi-engine sessions, cooperative timeout, quarantine and
+      observable whole-attempt fallback.
+- [ ] Pass the additional Raishx corpus for multi-grid load, lifecycle,
+      probability, mixed resources, split/merge, caches, queues and hostile engines.
+- [ ] Publish a reproducible report with commits, environment, p50/p95/p99,
+      allocation, main-thread impact, shortage quality and capability matrix.
 - [ ] Test the lowest and highest supported AE2 versions.
 
 Gate: a cold request cannot monopolize a server tick, concurrent load remains
-bounded, and resource conservation remains proven.
+bounded, and resource conservation remains proven. “Verified superiority”
+requires the P/S/O/D/R gates in the detailed document; until then, use only
+“partial parity” or “candidate”.
 
 ## Milestone 3 — transactions and persistence
 
