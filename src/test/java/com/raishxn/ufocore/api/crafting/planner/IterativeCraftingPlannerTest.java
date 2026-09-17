@@ -406,6 +406,64 @@ class IterativeCraftingPlannerTest {
         assertFalse(weighted.plan().missing().containsKey("gold"));
     }
 
+    /**
+     * The three kinds of missing material are not the same request to the player: a consumable is gone
+     * once used, a seed is handed back so one unit covers the batch, and a carrier wears out. A flat
+     * shortage asks for five of something without saying that one of them comes back.
+     */
+    @Test void splitsAShortageByWhatTheMaterialIsFor() {
+        var recipe = new CraftingPattern<>("plate", 0,
+                Map.of("ingot", amount(1), "tool", amount(1)), Map.of("catalyst", amount(1)),
+                Map.of("tool", 1), Map.of(), Map.of("plate", amount(1)), Set.of("plate"));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", amount(2), Map.of()));
+
+        var shortage = result.plan().shortage();
+        assertEquals(amount(2), shortage.consumable().get("ingot"));
+        assertEquals(amount(2), shortage.carrier().get("tool"));
+        assertEquals(amount(1), shortage.seed().get("catalyst"));
+        assertFalse(shortage.isEmpty());
+        // The three together are exactly the flat shortage, and no key is charged twice.
+        assertEquals(result.plan().missing().keySet(),
+                concat(shortage.consumable().keySet(), shortage.carrier().keySet(),
+                        shortage.seed().keySet()));
+    }
+
+    /**
+     * A decaying catalyst is consumed and handed back at once. What is really eaten is the part worth
+     * naming, so the working stock is only called a seed when nothing else explains the shortage.
+     */
+    @Test void chargesADecayingCatalystToConsumptionFirst() {
+        var recipe = catalyst("decaying", Map.of("catalyst", amount(1)),
+                Map.of("catalyst", amount(2)), Map.of("product", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("product", amount(2), Map.of()));
+
+        var shortage = result.plan().shortage();
+        assertEquals(amount(4), result.plan().missing().get("catalyst"));
+        assertEquals(amount(2), shortage.consumable().get("catalyst"));
+        assertEquals(amount(2), shortage.seed().get("catalyst"));
+    }
+
+    /** A complete plan is short of nothing in any category. */
+    @Test void aCompletePlanHasNoShortageInAnyCategory() {
+        var recipe = pattern("plate", Map.of("ingot", amount(1)), Map.of("plate", amount(1)));
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(recipe)),
+                new PlanningRequest<>("plate", amount(1), Map.of("ingot", amount(1))));
+
+        assertTrue(result.plan().shortage().isEmpty());
+    }
+
+    private static Set<String> concat(Set<String> first, Set<String> second, Set<String> third) {
+        Set<String> all = new java.util.LinkedHashSet<>(first);
+        all.addAll(second);
+        all.addAll(third);
+        return all;
+    }
+
     private static CraftingPattern<String> emitted(String id, Map<String, UfoAmount> inputs,
                                                     Map<String, UfoAmount> emittedInputs,
                                                     Map<String, UfoAmount> outputs) {

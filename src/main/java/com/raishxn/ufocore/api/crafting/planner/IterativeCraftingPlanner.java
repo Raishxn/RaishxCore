@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -361,6 +362,7 @@ public final class IterativeCraftingPlanner<K> {
                 // time, because it really is consumed every time.
                 // Allocated on first use: a graph with no catalyst at all must not pay for a map that
                 // would stay empty, and most graphs are that.
+                state.add(state.demandSeed, input.key(), input.amount());
                 UfoAmount working = input.amount().subtractClamped(state.presence == null
                         ? UfoAmount.ZERO : state.presence.getOrDefault(input.key(), UfoAmount.ZERO));
                 if (!working.isZero()) {
@@ -369,8 +371,16 @@ public final class IterativeCraftingPlanner<K> {
                     }
                     state.put(state.presence, input.key(), input.amount());
                 }
-                state.add(state.missing, input.key(), state.requirePresent(input.key(),
-                        working.add(alsoConsumed), input.variants()));
+                // The decay is drawn by its own consumed entry a few lines below, so charging the whole
+                // of working plus decay here double-counts it whenever the stock cannot cover the
+                // draw: with nothing in stock, a working stock of two and a decay of two demanded four
+                // here and two more there. What is charged here is the part the normal draw cannot
+                // explain, which is the shortfall of the total beyond the shortfall of the decay.
+                UfoAmount present = input.variants().isEmpty() ? state.available(input.key())
+                        : state.availableAcross(input.variants());
+                UfoAmount totalShort = working.add(alsoConsumed).subtractClamped(present);
+                UfoAmount decayShort = alsoConsumed.subtractClamped(present);
+                state.add(state.missing, input.key(), totalShort.subtractClamped(decayShort));
                 continue;
             }
             UfoAmount drawn = input.durable()
@@ -380,6 +390,7 @@ public final class IterativeCraftingPlanner<K> {
                 selfConsumedPerRun = selfConsumedPerRun.add(input.amount());
                 feedingDraws.add(drawn);
             } else {
+                state.add(input.durable() ? state.demandCarrier : state.demandConsumable, input.key(), drawn);
                 outside.add(input);
                 outsideDraws.add(drawn);
             }
@@ -391,6 +402,7 @@ public final class IterativeCraftingPlanner<K> {
             // shortage is supplied, and unlike a consumed input a seed is not used up, so the residue
             // it leaves has to appear in the plan.
             UfoAmount seed = state.extracted.getOrDefault(key, UfoAmount.ZERO);
+            state.add(state.demandSeed, key, selfConsumedPerRun);
             UfoAmount shortfall = selfConsumedPerRun.subtractClamped(seed);
             if (!shortfall.isZero()) {
                 state.add(state.missing, key, shortfall);
@@ -646,6 +658,10 @@ public final class IterativeCraftingPlanner<K> {
          * the same catalyst twice.
          */
         Map<K, UfoAmount> presence;
+        /** What the plan asks of each key as ordinary consumption, as a worn carrier, as a returned seed. */
+        final Map<K, UfoAmount> demandConsumable = new HashMap<>();
+        final Map<K, UfoAmount> demandCarrier = new HashMap<>();
+        final Map<K, UfoAmount> demandSeed = new HashMap<>();
         /**
          * Firings already served by each durable carrier group. A carrier survives several firings, so
          * a plan that expands the same recipe twice - once for its primary and again to chase a
@@ -726,7 +742,36 @@ public final class IterativeCraftingPlanner<K> {
             UfoAmount shortfall = missing.values().stream().reduce(UfoAmount.ZERO, UfoAmount::add);
             UfoAmount surplus = crafted.values().stream().reduce(UfoAmount.ZERO, UfoAmount::add);
             return new CraftingPlan<>(target, requested, executions, extracted, missing, remaining, schedule,
-                    new CraftingPlan.PlanQuality(missing.isEmpty(), executions.size(), runs, shortfall, surplus));
+                    new CraftingPlan.PlanQuality(missing.isEmpty(), executions.size(), runs, shortfall, surplus),
+                    splitShortage(missing));
+        }
+
+        /**
+         * Charges a missing key to what was consumed first, then to what wore out, and calls whatever
+         * cannot be explained that way a seed. A key can be short for more than one reason at once, and
+         * the consumed part is the one worth naming.
+         */
+        private CraftingPlan.Shortage<K> splitShortage(Map<K, UfoAmount> missing) {
+            Map<K, UfoAmount> consumable = new LinkedHashMap<>();
+            Map<K, UfoAmount> carrier = new LinkedHashMap<>();
+            Map<K, UfoAmount> seed = new LinkedHashMap<>();
+            missing.forEach((key, amount) -> {
+                UfoAmount left = amount;
+                UfoAmount eaten = left.min(demandConsumable.getOrDefault(key, UfoAmount.ZERO));
+                if (!eaten.isZero()) {
+                    consumable.put(key, eaten);
+                    left = left.subtract(eaten);
+                }
+                UfoAmount worn = left.min(demandCarrier.getOrDefault(key, UfoAmount.ZERO));
+                if (!worn.isZero()) {
+                    carrier.put(key, worn);
+                    left = left.subtract(worn);
+                }
+                if (!left.isZero()) {
+                    seed.put(key, left);
+                }
+            });
+            return new CraftingPlan.Shortage<>(consumable, seed, carrier);
         }
     }
 }

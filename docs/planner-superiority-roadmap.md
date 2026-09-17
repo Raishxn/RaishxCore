@@ -754,9 +754,17 @@ e tempo. O payload é só números: nenhum `AEKey`, NBT ou referência à grid s
 lifecycle, e o comando é opt-in por natureza. O relatório existia e estava testado e não
 tinha chamador nenhum, que é o mesmo que não existir.
 
-Falta o que é sobre a *decisão* e não sobre o custo: faltantes separados por
-consumível/seed/ferramenta, a rota escolhida e por quê, cortes de ciclo, e contagem de nós,
-arestas e SCCs do componente. O `gap do solver` fica sem sentido enquanto a Fase 4 não
+O primeiro item da lista que é sobre a *decisão* já existe no motor:
+`CraftingPlan.shortage()` devolve os faltantes separados em consumível, seed e portador, com as três
+chaves disjuntas cobrindo exatamente o faltante plano. Uma chave que falta por mais de um motivo é
+cobrada na ordem consumido, desgastado, devolvido — o que é realmente consumido é o mais acionável de
+dizer, e só o que não se explica assim é chamado de seed. Escrever isso revelou um defeito: um
+catalisador decaente sem estoque nenhum era cobrado duas vezes, uma pela checagem de presença e outra
+pelo saque do decaimento.
+
+Ainda falta **renderizar** o split: ele existe na API e ainda não aparece no comando, porque o
+relatório lê o diagnóstico do bridge e o bridge não carrega o split. Também faltam a rota escolhida e
+por quê, cortes de ciclo, e contagem de nós, arestas e SCCs do componente. O `gap do solver` fica sem sentido enquanto a Fase 4 não
 existir, e está registrado como tal lá.
 
 ## 14. Compatibilidade, API e rollout

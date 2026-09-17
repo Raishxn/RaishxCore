@@ -154,7 +154,7 @@ public final class FeedbackCyclePlanner<K> {
             }
         }
         return new CraftingPlan<>(plan.target(), plan.requested(), executions, extracted,
-                plan.missing(), remaining, expanded, quality);
+                plan.missing(), remaining, expanded, quality, plan.shortage());
     }
 
     private BigInteger loopTurns(CraftingPlan<K> plan) {
