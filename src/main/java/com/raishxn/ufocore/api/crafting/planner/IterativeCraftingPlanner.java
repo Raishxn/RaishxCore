@@ -79,7 +79,7 @@ public final class IterativeCraftingPlanner<K> {
                 ? PlanningResult.Status.COMPLETE : PlanningResult.Status.MISSING_INGREDIENTS;
         return new PlanningResult<>(status, plan, new PlanningResult.Diagnostics(graph.revision(),
                 budget.operations, budget.maximumDepth, Math.max(0, nanoTime.getAsLong() - started),
-                PlanningResult.ShortageSummary.of(plan.shortage())));
+                PlanningResult.ShortageSummary.of(plan.shortage()), budget.cycleCuts));
     }
 
     private void planDag(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State state, Budget budget) {
@@ -515,10 +515,16 @@ public final class IterativeCraftingPlanner<K> {
                 } else {
                     needed = multiply(input.amount(), runs);
                 }
-                if (state.active.contains(input.key()) && available.compareTo(needed) < 0) cycle = true;
+                if (state.active.contains(input.key()) && available.compareTo(needed) < 0) {
+                    cycle = true;
+                    budget.cycleCuts++;
+                }
                 // A self-feeding pattern is admitted only when it gains material; a self-loop that
                 // consumes at least as much as it makes cannot close.
-                if (input.key().equals(key) && !growth) cycle = true;
+                if (input.key().equals(key) && !growth) {
+                    cycle = true;
+                    budget.cycleCuts++;
+                }
                 if (!input.reusable()) {
                     UfoAmount carriers =
                             UfoAmount.of(available.asBigInteger().divide(input.amount().asBigInteger()));
@@ -615,6 +621,8 @@ public final class IterativeCraftingPlanner<K> {
         final long timeout;
         long operations;
         int maximumDepth;
+        /** Routes refused because they would have to reach into a key the plan is already expanding. */
+        long cycleCuts;
         Budget(PlanningRequest<K> request, long started) {
             this.request = request; this.started = started;
             long nanos;

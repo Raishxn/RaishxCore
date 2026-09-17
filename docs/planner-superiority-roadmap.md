@@ -773,7 +773,12 @@ compilação do snapshot e não sob demanda, porque uma pergunta de operador nã
 pagar para ser respondível. Os SCCs ficam de fora: o adaptador de ciclos reconhece uma volta simples
 de rota única e não constrói componentes, então não há o que contar.
 
-Também faltam a rota escolhida e por quê, e os cortes de ciclo. O `gap do solver` fica sem sentido enquanto a Fase 4 não
+Os **cortes de ciclo** também saem, como `lastPlan.cycleCuts`: quantas rotas foram recusadas por
+terem que entrar numa chave que o plano já está expandindo. É o que explica um shortage que parecia
+ter rota, e contar custa um incremento.
+
+Falta a **rota escolhida e por quê**. A escolhida já está visível em `patternExecutions`; o "por quê"
+exigiria o planner registrar qual elo do comparador decidiu cada escolha, e isso ainda não existe. O `gap do solver` fica sem sentido enquanto a Fase 4 não
 existir, e está registrado como tal lá.
 
 ## 14. Compatibilidade, API e rollout

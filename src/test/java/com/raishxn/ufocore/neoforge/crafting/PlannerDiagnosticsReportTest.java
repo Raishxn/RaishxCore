@@ -68,7 +68,7 @@ class PlannerDiagnosticsReportTest {
         assertTrue(PlannerDiagnosticsReport.toJson(diagnostics(null, "idle")).contains("\"lastPlan\":null"));
 
         String reported = PlannerDiagnosticsReport.toJson(
-                diagnostics(new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, noShortage()),
+                diagnostics(new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, noShortage(), 2L),
                         "COMPLETE"));
         assertTrue(reported.contains("\"lastPlan\":{\"graphRevision\":7,\"operations\":1234,"
                 + "\"maximumDepth\":12,\"elapsedNanos\":987654,"), reported);
@@ -84,7 +84,8 @@ class PlannerDiagnosticsReportTest {
         var shortage = new PlanningResult.ShortageSummary(UfoAmount.of(5L), UfoAmount.ONE, UfoAmount.of(2L),
                 1, 1, 1);
         String json = PlannerDiagnosticsReport.toJson(diagnostics(
-                new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, shortage), "MISSING_INGREDIENTS"));
+                new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, shortage, 0L),
+                "MISSING_INGREDIENTS"));
 
         assertTrue(json.contains("\"missingConsumable\":5"), json);
         assertTrue(json.contains("\"missingSeed\":1"), json);
@@ -92,6 +93,7 @@ class PlannerDiagnosticsReportTest {
         assertTrue(json.contains("\"missingConsumableKinds\":1"), json);
         assertTrue(json.contains("\"missingSeedKinds\":1"), json);
         assertTrue(json.contains("\"missingCarrierKinds\":1"), json);
+        assertTrue(json.contains("\"cycleCuts\":0"), json);
     }
 
     private static PlanningResult.ShortageSummary noShortage() {

@@ -55,6 +55,10 @@ reasoned over. They are counted once when the snapshot is compiled rather than o
 demand, so an operator asking how large the graph is does not make every plan pay
 for the ability to answer.
 
+`lastPlan.cycleCuts` counts the routes refused because they would have to reach
+into a key the plan is already expanding. It is what explains a shortage that looks
+like it should have had a route, and counting it costs a single increment.
+
 Inside `lastPlan`, `missingConsumable`, `missingSeed` and `missingCarrier` are how
 much of the shortage is material that is gone once used, material that is handed
 back so one unit covers the batch, and carriers that wear out. The three `...Kinds`

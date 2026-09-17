@@ -89,6 +89,9 @@ public final class PlannerDiagnosticsReport {
                     .append(",\"missingConsumableKinds\":").append(shortage.consumableKinds())
                     .append(",\"missingSeedKinds\":").append(shortage.seedKinds())
                     .append(",\"missingCarrierKinds\":").append(shortage.carrierKinds())
+                    // Routes refused because they would have to reach into a key the plan is already
+                    // expanding. It explains a shortage that looks like it should have a route.
+                    .append(",\"cycleCuts\":").append(lastPlan.cycleCuts())
                     .append('}');
         }
         return json.append('}').toString();
@@ -96,14 +99,15 @@ public final class PlannerDiagnosticsReport {
 
     /** The plan diagnostics as this renderer needs them, so the shape is pinned in one place. */
     private record PlanningResultDiagnostics(long graphRevision, long operations, int maximumDepth,
-                                             long elapsedNanos, PlanningResult.ShortageSummary shortage) {
+                                             long elapsedNanos, PlanningResult.ShortageSummary shortage,
+                                             long cycleCuts) {
     }
 
     private static PlanningResultDiagnostics lastPlan(Ae2PlannerBridge.Diagnostics diagnostics) {
         var plan = diagnostics.lastPlan();
         return plan == null ? null
                 : new PlanningResultDiagnostics(plan.graphRevision(), plan.operations(),
-                        plan.maximumDepth(), plan.elapsedNanos(), plan.shortage());
+                        plan.maximumDepth(), plan.elapsedNanos(), plan.shortage(), plan.cycleCuts());
     }
 
     private static String escape(String value) {

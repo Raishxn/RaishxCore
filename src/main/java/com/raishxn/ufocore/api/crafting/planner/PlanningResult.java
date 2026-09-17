@@ -55,12 +55,16 @@ public record PlanningResult<K>(Status status, CraftingPlan<K> plan, Diagnostics
     }
 
     public record Diagnostics(long graphRevision, long operations, int maximumDepth, long elapsedNanos,
-                              ShortageSummary shortage) {
+                              ShortageSummary shortage, long cycleCuts) {
         public Diagnostics {
-            if (graphRevision < 0L || operations < 0L || maximumDepth < 0 || elapsedNanos < 0L) {
+            if (graphRevision < 0L || operations < 0L || maximumDepth < 0 || elapsedNanos < 0L
+                    || cycleCuts < 0L) {
                 throw new IllegalArgumentException("diagnostics must be non-negative");
             }
             Objects.requireNonNull(shortage, "shortage");
+            if (cycleCuts < 0L) {
+                throw new IllegalArgumentException("cycle cuts must be non-negative");
+            }
         }
     }
 }
