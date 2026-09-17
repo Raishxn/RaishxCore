@@ -76,6 +76,23 @@ class CaptureBudgetPoolTest {
     }
 
     @Test
+    void perTickSpendCountsOnlyTheCurrentTickAndOnlyWhatWasReallySpent() {
+        var pool = new CaptureBudgetPool(Duration.ofMillis(4));
+        pool.beginTick();
+        pool.reserve(3 * MILLIS);
+        pool.settle(3 * MILLIS, MILLIS);
+
+        assertEquals(MILLIS, pool.spentThisTick(), "the tick must report the time slices really used");
+
+        pool.beginTick();
+
+        assertEquals(0L, pool.spentThisTick(), "a new tick starts with no capture time charged");
+        long reservation = pool.reserve(MILLIS);
+        pool.settle(reservation, 2 * MILLIS);
+        assertEquals(2 * MILLIS, pool.spentThisTick(), "an overrun belongs to the tick that caused it");
+    }
+
+    @Test
     void invalidArgumentsAreRefused() {
         assertThrows(IllegalArgumentException.class, () -> new CaptureBudgetPool(Duration.ZERO));
         assertThrows(IllegalArgumentException.class, () -> new CaptureBudgetPool(Duration.ofMillis(-1)));

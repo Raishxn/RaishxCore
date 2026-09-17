@@ -9,7 +9,6 @@ import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.neoforge.crafting.CooperativeGraphCapture.KeyDetails;
 import com.raishxn.ufocore.neoforge.crafting.CooperativeGraphCapture.PatternDetails;
 import com.raishxn.ufocore.neoforge.crafting.CooperativeGraphCapture.Slot;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -17,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import net.minecraft.world.level.Level;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Server-thread adapter that answers the neutral capture machine in terms of canonical key ids.
@@ -28,7 +28,8 @@ import net.minecraft.world.level.Level;
  * <p>Refusals are deliberately loud: a pattern with substitution, remainders, feedback, an unstable
  * definition or a non-exact input raises {@link Ae2PlanningSnapshot.Declined} instead of producing a
  * graph that would misrepresent the grid. The answers are cached per id, so a capture that resumes on
- * a later tick never repeats a grid query.
+ * a later tick never repeats a grid query, and patterns are validated one index at a time, so a key
+ * with many patterns is captured across several slices instead of in one call.
  */
 final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternDetails> {
     private final Level level;
@@ -38,7 +39,6 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
     private final Map<String, Integer> amountsPerByte = new LinkedHashMap<>();
     private final Map<String, List<IPatternDetails>> available = new HashMap<>();
     private final Map<String, KeyDetails> described = new HashMap<>();
-    private final Map<String, List<PatternDetails<IPatternDetails>>> recipes = new HashMap<>();
     private final Set<String> capturedPatterns = new HashSet<>();
 
     Ae2CaptureSource(Level level, ICraftingService service) {
@@ -68,14 +68,23 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
     }
 
     @Override
-    public List<PatternDetails<IPatternDetails>> patternsFor(String id) {
-        List<PatternDetails<IPatternDetails>> known = recipes.get(id);
-        if (known != null) return known;
-        List<PatternDetails<IPatternDetails>> captured = new ArrayList<>();
-        for (IPatternDetails pattern : availableFor(id)) capture(pattern, captured);
-        List<PatternDetails<IPatternDetails>> result = List.copyOf(captured);
-        recipes.put(id, result);
-        return result;
+    public int patternCount(String id) {
+        return availableFor(id).size();
+    }
+
+    /**
+     * Validates exactly one pattern of one key, so the capture can end its slice in the middle of a
+     * fat key. A pattern another key already contributed is reported as {@code null} instead of being
+     * dropped silently, which is what the machine expects from a shared pattern.
+     */
+    @Override
+    @Nullable
+    public PatternDetails<IPatternDetails> patternAt(String id, int index) {
+        List<IPatternDetails> patterns = availableFor(id);
+        if (index < 0 || index >= patterns.size()) {
+            throw new Ae2PlanningSnapshot.Declined("pattern index out of range for " + id);
+        }
+        return capture(patterns.get(index));
     }
 
     /** Canonical id for a native key. Two keys with the same id make the capture incoherent. */
@@ -94,7 +103,8 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
         return id;
     }
 
-    private void capture(IPatternDetails pattern, List<PatternDetails<IPatternDetails>> captured) {
+    @Nullable
+    private PatternDetails<IPatternDetails> capture(IPatternDetails pattern) {
         if (pattern instanceof AECraftingPattern crafting
                 && (crafting.canSubstitute() || crafting.canSubstituteFluids())) {
             throw new Ae2PlanningSnapshot.Declined("substitution pattern");
@@ -102,7 +112,7 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
         var definition = pattern.getDefinition();
         if (definition == null) throw new Ae2PlanningSnapshot.Declined("pattern without stable definition");
         String patternId = Ae2PlanningSnapshot.canonical(definition.toTagGeneric(level.registryAccess()));
-        if (capturedPatterns.contains(patternId)) return;
+        if (capturedPatterns.contains(patternId)) return null;
         Map<String, Slot> inputs = new LinkedHashMap<>();
         for (var input : pattern.getInputs()) {
             var options = input.getPossibleInputs();
@@ -129,7 +139,7 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
             throw new Ae2PlanningSnapshot.Declined("primary output is not a declared output");
         }
         capturedPatterns.add(patternId);
-        captured.add(new PatternDetails<>(pattern, patternId, priority(pattern), inputs, outputs, Set.of(primary)));
+        return new PatternDetails<>(pattern, patternId, priority(pattern), inputs, outputs, Set.of(primary));
     }
 
     private int priority(IPatternDetails pattern) {

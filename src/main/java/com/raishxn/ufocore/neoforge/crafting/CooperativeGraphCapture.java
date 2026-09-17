@@ -5,13 +5,14 @@ import com.raishxn.ufocore.api.crafting.planner.CraftingPattern;
 import com.raishxn.ufocore.api.crafting.planner.ImmutableCraftingGraph;
 import com.raishxn.ufocore.api.crafting.planner.PlanningCancellation;
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Resumable capture of every pattern reachable from one target key, driven in bounded slices.
@@ -20,10 +21,13 @@ import java.util.Set;
  * id, so the traversal runs on the server thread in per-tick slices and stays testable without a
  * world. Identity is the canonical id, never a native handle, and every quantity stays exact.
  *
- * <p>Progress is deterministic. The queue is a breadth-first walk over ids in registration order, a
- * slice only ends between two keys, and one slice always performs at least one unit of work, so a
- * budget smaller than the first key still finishes the capture instead of spinning. Wall-clock
- * limits are a safety net for one pathological key, never the reason a slice stops progressing.
+ * <p>Progress is deterministic and as fine as one pattern. The queue is a breadth-first walk over
+ * ids in registration order, a slice only ends between two patterns, and one slice always performs
+ * at least one unit of work, so a budget smaller than the first unit still finishes the capture
+ * instead of spinning. A key with an unusual number of patterns no longer decides how long a slice
+ * may take: the only work a slice cannot interrupt is one key lookup and one pattern, which is the
+ * atomic tail the accounting reports. Wall-clock limits are a safety net for that tail, never the
+ * reason a slice stops progressing.
  *
  * <p>No partial state escapes. A cancelled, declined or discarded machine keeps no keys, patterns or
  * graph, and {@link #result()} only answers after {@link Status#COMPLETED}.
@@ -41,7 +45,7 @@ public final class CooperativeGraphCapture<P> {
 
     /**
      * Time and edge allowance for one slice. The edge allowance makes a slice reproducible in tests;
-     * the time allowance keeps a single key with an unusual number of patterns bounded.
+     * the time allowance keeps one atomic unit - a key lookup plus one pattern - bounded.
      */
     public record Slice(long nanos, int maxEdges) {
         public Slice {
@@ -51,13 +55,24 @@ public final class CooperativeGraphCapture<P> {
         }
     }
 
-    /** Everything the machine needs to know about the grid, answered by canonical key id. */
+    /**
+     * Everything the machine needs to know about the grid, answered by canonical key id.
+     *
+     * <p>Patterns are asked for one index at a time, so the adapter can be interrupted in the middle
+     * of a fat key instead of validating every pattern of that key in one call.
+     */
     public interface Source<P> {
         /** Facts about one key that reaches the traversal. Throws {@code Declined} to refuse it. */
         KeyDetails describe(String id);
 
-        /** Patterns producing one key, already validated and normalized by the adapter. */
-        List<PatternDetails<P>> patternsFor(String id);
+        /** How many raw patterns this key reports, before this capture deduplicates them. */
+        int patternCount(String id);
+
+        /**
+         * The pattern at one index, already validated and normalized by the adapter, or {@code null}
+         * when the adapter has already captured that pattern for another key.
+         */
+        @Nullable PatternDetails<P> patternAt(String id, int index);
     }
 
     /** Key facts that decide whether the traversal can continue. */
@@ -120,7 +135,7 @@ public final class CooperativeGraphCapture<P> {
     }
 
     private static <T> Map<String, T> ordered(Map<String, T> source) {
-        return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(source));
+        return Collections.unmodifiableMap(new LinkedHashMap<>(source));
     }
 
     private final Source<P> source;
@@ -136,7 +151,14 @@ public final class CooperativeGraphCapture<P> {
     private final Map<String, P> handles = new LinkedHashMap<>();
     private boolean multiplePaths;
     private int patternsCaptured;
+    @Nullable private String keyInProgress;
+    private int keyPatterns;
+    private int cursor;
     private long lastSliceNanos;
+    private int lastSliceEdges;
+    private long lastKeyNanos;
+    private long lastPatternNanos;
+    private long lastPublishNanos;
     private boolean discarded;
     private Status status = Status.YIELDED;
     private Captured<P> result;
@@ -160,18 +182,22 @@ public final class CooperativeGraphCapture<P> {
         if (discarded) return Status.CANCELLED;
         if (status != Status.YIELDED) return status;
         budget.beginSlice(slice.nanos(), slice.maxEdges());
+        lastKeyNanos = 0L;
+        lastPatternNanos = 0L;
+        lastPublishNanos = 0L;
         long started = System.nanoTime();
         try {
             budget.checkpoint();
             if (cancellation.isCancelled()) return discard();
             boolean worked = false;
-            while (!pending.isEmpty()) {
-                // At least one key per slice: otherwise a slice allowance smaller than the clock
+            while (!finished()) {
+                // At least one unit per slice: otherwise a slice allowance smaller than the clock
                 // resolution would yield forever without progress and the capture would never finish.
                 if (worked && budget.sliceExhausted()) return Status.YIELDED;
                 if (cancellation.isCancelled()) return discard();
+                budget.checkpoint();
                 try {
-                    visit(pending.removeFirst());
+                    step();
                 } catch (Ae2PlanningSnapshot.Declined declined) {
                     discard();
                     throw declined;
@@ -180,10 +206,13 @@ public final class CooperativeGraphCapture<P> {
             }
             if (cancellation.isCancelled()) return discard();
             budget.checkpoint();
+            long publishing = System.nanoTime();
             publish();
+            lastPublishNanos = Math.max(0L, System.nanoTime() - publishing);
             return Status.COMPLETED;
         } finally {
             lastSliceNanos = Math.max(0L, System.nanoTime() - started);
+            lastSliceEdges = budget.sliceEdgesUsed();
         }
     }
 
@@ -196,6 +225,21 @@ public final class CooperativeGraphCapture<P> {
     /** Wall-clock time consumed by the last slice, charged back to the shared tick budget. */
     public long lastSliceNanos() { return lastSliceNanos; }
 
+    /**
+     * Edges the last slice really consumed. Deterministic, so a gate can assert that a slice never
+     * grew with the size of a key instead of relying on wall-clock readings.
+     */
+    public int lastSliceEdges() { return lastSliceEdges; }
+
+    /** Time the last slice spent looking up keys, including their pattern counts. */
+    public long lastKeyNanos() { return lastKeyNanos; }
+
+    /** Time the last slice spent accepting patterns. */
+    public long lastPatternNanos() { return lastPatternNanos; }
+
+    /** Time the last slice spent building and publishing the graph, zero until the capture ends. */
+    public long lastPublishNanos() { return lastPublishNanos; }
+
     public Source<P> source() { return source; }
 
     public boolean cancelled() { return discarded || status == Status.CANCELLED; }
@@ -203,8 +247,28 @@ public final class CooperativeGraphCapture<P> {
     /** Diagnostics: patterns accepted so far by this capture. */
     public int patternsCaptured() { return patternsCaptured; }
 
-    private void visit(String id) {
+    /** Whether every reachable key was consumed and only the result is missing. */
+    private boolean finished() {
+        return keyInProgress == null && pending.isEmpty();
+    }
+
+    /**
+     * Performs one unit of work: either the lookup of one key, or one of the patterns of the key being
+     * walked. The unit is the smallest interruption the machine allows, so a slice can end inside a
+     * key that has many patterns.
+     */
+    private void step() {
+        if (keyInProgress != null) {
+            acceptPattern();
+            return;
+        }
+        visitKey();
+    }
+
+    private void visitKey() {
+        String id = pending.removeFirst();
         if (!seen.add(id)) return;
+        long started = System.nanoTime();
         KeyDetails details = source.describe(id);
         if (!details.id().equals(id)) {
             throw new Ae2PlanningSnapshot.Declined("key id changed during capture");
@@ -213,25 +277,41 @@ public final class CooperativeGraphCapture<P> {
         if (known == null) budget.key(id);
         if (details.emitter()) throw new Ae2PlanningSnapshot.Declined("crafting emitter");
         if (details.routes() > 1) multiplePaths = true;
-        for (PatternDetails<P> recipe : source.patternsFor(id)) {
-            budget.edge();
-            if (patterns.containsKey(recipe.id())) continue;
-            budget.pattern(recipe.id());
-            verifySlots(recipe.inputs());
-            verifySlots(recipe.outputs());
-            if (recipe.inputs().keySet().stream().anyMatch(recipe.outputs()::containsKey)) {
-                throw new Ae2PlanningSnapshot.Declined("feedback or catalyst pattern");
-            }
-            Map<String, UfoAmount> inputs = new LinkedHashMap<>();
-            recipe.inputs().forEach((inputId, slot) -> inputs.put(inputId, slot.amount()));
-            Map<String, UfoAmount> outputs = new LinkedHashMap<>();
-            recipe.outputs().forEach((outputId, slot) -> outputs.put(outputId, slot.amount()));
-            patterns.put(recipe.id(), new CraftingPattern<>(recipe.id(), recipe.priority(), inputs, outputs,
-                    recipe.craftable()));
-            handles.put(recipe.id(), recipe.handle());
-            recipe.inputs().keySet().forEach(input -> pending.addLast(input));
-            patternsCaptured++;
+        keyPatterns = source.patternCount(id);
+        if (keyPatterns < 0) throw new Ae2PlanningSnapshot.Declined("negative pattern count for " + id);
+        cursor = 0;
+        keyInProgress = keyPatterns == 0 ? null : id;
+        lastKeyNanos += Math.max(0L, System.nanoTime() - started);
+    }
+
+    private void acceptPattern() {
+        String id = keyInProgress;
+        int index = cursor;
+        if (++cursor >= keyPatterns) keyInProgress = null;
+        long started = System.nanoTime();
+        PatternDetails<P> recipe = source.patternAt(id, index);
+        if (recipe != null) accept(recipe);
+        lastPatternNanos += Math.max(0L, System.nanoTime() - started);
+    }
+
+    private void accept(PatternDetails<P> recipe) {
+        budget.edge();
+        if (patterns.containsKey(recipe.id())) return;
+        budget.pattern(recipe.id());
+        verifySlots(recipe.inputs());
+        verifySlots(recipe.outputs());
+        if (recipe.inputs().keySet().stream().anyMatch(recipe.outputs()::containsKey)) {
+            throw new Ae2PlanningSnapshot.Declined("feedback or catalyst pattern");
         }
+        Map<String, UfoAmount> inputs = new LinkedHashMap<>();
+        recipe.inputs().forEach((inputId, slot) -> inputs.put(inputId, slot.amount()));
+        Map<String, UfoAmount> outputs = new LinkedHashMap<>();
+        recipe.outputs().forEach((outputId, slot) -> outputs.put(outputId, slot.amount()));
+        patterns.put(recipe.id(), new CraftingPattern<>(recipe.id(), recipe.priority(), inputs, outputs,
+                recipe.craftable()));
+        handles.put(recipe.id(), recipe.handle());
+        recipe.inputs().keySet().forEach(input -> pending.addLast(input));
+        patternsCaptured++;
     }
 
     /** Counts one edge per pattern slot and refuses a slot the adapter left without an id. */
@@ -256,6 +336,9 @@ public final class CooperativeGraphCapture<P> {
         keys.clear();
         patterns.clear();
         handles.clear();
+        keyInProgress = null;
+        keyPatterns = 0;
+        cursor = 0;
         result = null;
         return Status.CANCELLED;
     }

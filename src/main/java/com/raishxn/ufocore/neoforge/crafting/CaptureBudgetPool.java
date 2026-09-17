@@ -21,6 +21,7 @@ public final class CaptureBudgetPool {
     private long reservations;
     private long grantedNanos;
     private long spentNanos;
+    private long spentAtTickStart;
     private long exhaustedTicks;
 
     public CaptureBudgetPool(Duration tickBudget) {
@@ -40,6 +41,15 @@ public final class CaptureBudgetPool {
     public void beginTick() {
         remainingNanos = nanosPerTick;
         ticks++;
+        spentAtTickStart = spentNanos;
+    }
+
+    /**
+     * Time every grid together really spent on capture since the current tick began, never what was
+     * reserved for it. This is the per-tick sample the slice histograms report.
+     */
+    public long spentThisTick() {
+        return spentNanos - spentAtTickStart;
     }
 
     /** Reserves up to {@code wantedNanos} from this tick, returning what was actually available. */

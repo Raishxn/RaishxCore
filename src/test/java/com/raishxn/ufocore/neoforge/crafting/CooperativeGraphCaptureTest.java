@@ -23,12 +23,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The capture machine must stay deterministic and honest without a Minecraft world: one slice and
- * many slices must capture the same graph, a budget can never lose or half-publish state, and every
- * refusal path must discard everything it had already registered.
+ * many slices must capture the same graph, a slice must be interruptible inside a key with many
+ * patterns while its edges stay inside the budget plus one atomic tail, a budget can never lose or
+ * half-publish state, and every refusal path must discard everything it had already registered.
  */
 class CooperativeGraphCaptureTest {
     private static final Slice UNBOUNDED = new Slice(Long.MAX_VALUE, Integer.MAX_VALUE);
-    private static final Slice ONE_KEY = new Slice(2_000_000L, 1);
+    private static final Slice ONE_EDGE = new Slice(2_000_000L, 1);
+    /** Edges of the widest single pattern in these fixtures: one input, one output, one pattern. */
+    private static final int PATTERN_EDGES = 3;
     private static final String TARGET = "assembled";
 
     @Test
@@ -47,27 +50,102 @@ class CooperativeGraphCaptureTest {
     }
 
     @Test
-    void slicesYieldBetweenKeysAndCaptureTheSameGraph() {
+    void boundedSlicesCaptureTheSameGraphAsOneUnboundedSlice() {
         var whole = capture(chain(), PlanningCancellation.NEVER);
         assertEquals(Status.COMPLETED, whole.advance(UNBOUNDED));
 
         var sliced = capture(chain(), PlanningCancellation.NEVER);
         int slices = 0;
-        while (sliced.advance(ONE_KEY) == Status.YIELDED) slices++;
+        while (sliced.advance(ONE_EDGE) == Status.YIELDED) slices++;
 
-        assertTrue(slices >= 3, "a one-edge slice needs one slice per key, got " + slices);
+        assertTrue(slices >= 3, "a one-edge slice needs several slices, got " + slices);
         assertEquals(whole.result().keys().keySet(), sliced.result().keys().keySet());
         assertEquals(whole.result().graph().patterns().stream().map(pattern -> pattern.id()).toList(),
                 sliced.result().graph().patterns().stream().map(pattern -> pattern.id()).toList());
     }
 
     @Test
-    void oneKeyPerSliceAlwaysMakesProgress() {
+    void aSliceTooSmallForOnePatternStillMakesProgress() {
         var capture = capture(chain(), PlanningCancellation.NEVER);
         for (int attempt = 0; attempt < 50; attempt++) {
-            if (capture.advance(ONE_KEY) == Status.COMPLETED) return;
+            if (capture.advance(ONE_EDGE) == Status.COMPLETED) return;
         }
         throw new AssertionError("a bounded slice never finished the capture");
+    }
+
+    @Test
+    void aKeyWithManyPatternsIsWalkedAcrossSeveralSlices() {
+        var grid = new FakeGrid();
+        grid.leaf("ore");
+        grid.fat(TARGET, "ore", 200);
+        var whole = capture(grid, PlanningCancellation.NEVER);
+        assertEquals(Status.COMPLETED, whole.advance(UNBOUNDED));
+        assertEquals(200, whole.result().graph().patternsFor(TARGET).size());
+
+        var sliced = capture(grid, PlanningCancellation.NEVER);
+        int slices = 0;
+        int budget = 8;
+        while (sliced.advance(new Slice(2_000_000L, budget)) == Status.YIELDED) {
+            slices++;
+        }
+        slices++;
+
+        assertTrue(slices >= 60, "a 200-pattern key must be split into many slices, got " + slices);
+        assertEquals(200, sliced.result().graph().patternsFor(TARGET).size());
+        assertEquals(whole.result().graph().patterns().size(), sliced.result().graph().patterns().size());
+    }
+
+    @Test
+    void aSliceNeverGrowsWithTheSizeOfTheKeyItWalks() {
+        var grid = new FakeGrid();
+        grid.leaf("ore");
+        grid.fat(TARGET, "ore", 500);
+        var capture = capture(grid, PlanningCancellation.NEVER);
+        int budget = 16;
+
+        assertEquals(Status.YIELDED, capture.advance(new Slice(2_000_000L, budget)));
+        int widest = 0;
+        Status status = Status.YIELDED;
+        while (status == Status.YIELDED) {
+            widest = Math.max(widest, capture.lastSliceEdges());
+            status = capture.advance(new Slice(2_000_000L, budget));
+        }
+        widest = Math.max(widest, capture.lastSliceEdges());
+
+        assertEquals(Status.COMPLETED, status);
+        assertTrue(widest <= budget + PATTERN_EDGES,
+                "a slice may only overshoot by one atomic pattern: " + widest);
+        assertTrue(capture.lastSliceEdges() <= budget + PATTERN_EDGES,
+                "the final slice must stay inside the same bound");
+    }
+
+    @Test
+    void aSourceThatReportsAnImpossiblePatternCountIsRefused() {
+        var grid = new FakeGrid();
+        grid.leaf("ore");
+        grid.produces(TARGET, inputs("ore", 1L));
+        grid.overcounts(TARGET, 5);
+        var capture = capture(grid, PlanningCancellation.NEVER);
+
+        var declined = assertThrows(Ae2PlanningSnapshot.Declined.class, () -> capture.advance(UNBOUNDED));
+
+        assertEquals("declined by the fake grid", declined.getMessage());
+        assertEquals(Status.CANCELLED, capture.advance(UNBOUNDED));
+        assertThrows(IllegalStateException.class, capture::result);
+    }
+
+    @Test
+    void aNegativePatternCountIsRefused() {
+        var grid = new FakeGrid();
+        grid.leaf("ore");
+        grid.produces(TARGET, inputs("ore", 1L));
+        grid.reportsPatterns(TARGET, -1);
+        var capture = capture(grid, PlanningCancellation.NEVER);
+
+        var declined = assertThrows(Ae2PlanningSnapshot.Declined.class, () -> capture.advance(UNBOUNDED));
+
+        assertEquals("negative pattern count for " + TARGET, declined.getMessage());
+        assertThrows(IllegalStateException.class, capture::result);
     }
 
     @Test
@@ -83,11 +161,11 @@ class CooperativeGraphCaptureTest {
     void cancellationBetweenSlicesDiscardsEverythingCapturedSoFar() {
         var cancellation = PlanningCancellation.source();
         var capture = capture(chain(), cancellation);
-        assertEquals(Status.YIELDED, capture.advance(ONE_KEY));
+        assertEquals(Status.YIELDED, capture.advance(ONE_EDGE));
 
         cancellation.cancel();
 
-        assertEquals(Status.CANCELLED, capture.advance(ONE_KEY));
+        assertEquals(Status.CANCELLED, capture.advance(ONE_EDGE));
         assertEquals(Status.CANCELLED, capture.advance(UNBOUNDED));
         assertTrue(capture.cancelled());
         assertThrows(IllegalStateException.class, capture::result);
@@ -211,12 +289,20 @@ class CooperativeGraphCaptureTest {
     void sliceMetricsReportSpentTimeAndConservativeBytes() {
         var capture = capture(chain(), PlanningCancellation.NEVER);
         assertEquals(0L, capture.lastSliceNanos());
+        assertEquals(0, capture.lastSliceEdges());
 
-        assertEquals(Status.YIELDED, capture.advance(ONE_KEY));
+        assertEquals(Status.YIELDED, capture.advance(ONE_EDGE));
 
         assertTrue(capture.lastSliceNanos() > 0L, "a slice must report the time it spent");
+        assertTrue(capture.lastSliceEdges() > 0, "a slice must report the edges it consumed");
+        assertTrue(capture.lastKeyNanos() + capture.lastPatternNanos() <= capture.lastSliceNanos(),
+                "the phases are subsets of the slice they describe");
+        assertEquals(0L, capture.lastPublishNanos(), "nothing is published before the capture ends");
+
         assertEquals(Status.COMPLETED, capture.advance(UNBOUNDED));
         assertTrue(capture.result().estimatedBytes() > 0L, "the snapshot must carry its byte weight");
+        assertTrue(capture.lastPublishNanos() > 0L || capture.lastKeyNanos() > 0L,
+                "the publishing slice must time its own work");
     }
 
     @Test
@@ -277,10 +363,27 @@ class CooperativeGraphCaptureTest {
         private final Map<String, KeyDetails> details = new LinkedHashMap<>();
         private final List<String> described = new ArrayList<>();
         private final java.util.Set<String> declined = new java.util.HashSet<>();
+        private final Map<String, Integer> overcounted = new LinkedHashMap<>();
         private int generated;
 
         void leaf(String id) {
             details.put(id, new KeyDetails(id, 1, false, 0));
+        }
+
+        /** Registers many distinct patterns for one key, all consuming the same input. */
+        void fat(String output, String input, int count) {
+            for (int index = 0; index < count; index++) {
+                add(output, "pattern-" + output + "-" + index, Map.of(input, 1L), 1L);
+            }
+        }
+
+        /** Reports more patterns than it can serve, as a broken adapter would. */
+        void overcounts(String id, int count) {
+            overcounted.put(id, count);
+        }
+
+        void reportsPatterns(String id, int count) {
+            overcounted.put(id, count);
         }
 
         void produces(String output, Map<String, Long> inputs) {
@@ -325,8 +428,17 @@ class CooperativeGraphCaptureTest {
         }
 
         @Override
-        public List<PatternDetails<String>> patternsFor(String id) {
-            return recipes.getOrDefault(id, List.of());
+        public int patternCount(String id) {
+            return overcounted.getOrDefault(id, recipes.getOrDefault(id, List.of()).size());
+        }
+
+        @Override
+        public PatternDetails<String> patternAt(String id, int index) {
+            List<PatternDetails<String>> available = recipes.getOrDefault(id, List.of());
+            if (index < 0 || index >= available.size()) {
+                throw new Ae2PlanningSnapshot.Declined("declined by the fake grid");
+            }
+            return available.get(index);
         }
 
         private void add(String output, String patternId, Map<String, Long> inputs, long outputAmount) {

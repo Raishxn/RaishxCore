@@ -715,19 +715,30 @@ Thunderbolt foi executada, portanto nenhuma afirmação de paridade é feita.
 
 ### Gate O — operação superior
 
-Estado em 2026-09-17: captura cooperativa, orçamento global e cancelamento por
-fase existem e têm testes, mas a fatia de 2 ms **não foi medida** e só termina
-entre duas chaves, então os dois primeiros itens seguem abertos.
+Estado em 2026-09-17: captura cooperativa, orçamento global, cancelamento por
+fase, fatia interruptível dentro de uma chave e histogramas de p50/p95/p99
+existem e têm testes. O alvo de 2 ms foi medido em carga sintética
+(`plannerCaptureSlices`), mas **não** foi confirmado in-game num servidor real,
+e o soak com grids reais continua pendente.
 
-- [ ] Captura incremental com fatia p95 ≤ 2 ms por grid/tick e orçamento global
-      (fatias e orçamento implementados; p95 pendente de medição e a fatia ainda
-      termina por chave).
+- [x] Captura incremental com fatia interruptível e orçamento global: uma fatia
+      termina entre dois padrões, nunca entre chaves apenas, então o tempo que
+      uma grid retém o server thread não cresce com o número de padrões de uma
+      chave (bound determinístico verificado por unit test e pelo harness).
+- [ ] Fatia p95 ≤ 2 ms por grid/tick confirmada em jogo: com 20 µs simulados por
+      chamada de grid, o p95 medido pelo harness ficou em 0,8 ms de uma chave com
+      1 até 10 000 padrões, e o p95 do próprio maquinário ficou em 0,2 ms; o
+      número ao vivo ainda depende de uma sessão com grid real.
 - [ ] Multi-grid não apresenta starvation nem contaminação de circuit breaker
-      (rodízio implementado; soak multi-grid pendente).
+      (rodízio implementado; rodízio e ausência de starvation cobertos por unit
+      tests, harness e GameTests; soak com grids reais pendente).
 - [x] Cancelamento/lifecycle em todas as fases da captura e do planejamento
       (sessões multi-engine entram no R2.7).
 - [ ] Engine não cooperativo isolado sem bloquear AE2 ou nova grid.
-- [ ] Métricas p50/p95/p99, fila, cache e memória disponíveis.
+- [x] Métricas p50/p95/p99, fila, cache e memória disponíveis: histogramas de
+      fatia (por grid) e de tick (todos os grids), acumuladores por fase da
+      fatia, fila, cache, bytes e orçamento restante em `Diagnostics`; não há
+      exportador externo de métricas.
 
 ### Gate D — desempenho diferencial
 
@@ -796,10 +807,29 @@ Concluído e verificado neste recorte (`docs/planner-cooperative-capture.md`):
       descartar a tentativa inteira e com o motivo registrado no status;
 - [x] testes de mutação durante captura e de captura que atravessa ticks.
 
+Concluído no segundo recorte do R2.2:
+
+- [x] fatia dentro de uma chave: cursor por padrão, com o adapter respondendo uma
+      chave (`patternCount`) e um padrão por vez (`patternAt`), de modo que uma
+      chave gorda é capturada em várias fatias em vez de uma única chamada;
+- [x] contabilidade determinística da fatia: arestas realmente consumidas e
+      tempo por fase (chave, padrão, publicação) expostos pelo maquinário;
+- [x] `CaptureSliceMetrics`: histogramas limitados de fatia e de tick, com
+      p50/p95/p99 conservadores (borda superior do balde) e acumuladores por
+      fase, conectados a `Diagnostics`;
+- [x] harness `plannerCaptureSlices` que dirige o maquinário de produção em
+      fatias, mede p50/p95/p99 por grid e por tick, compara cada captura fatiada
+      com a captura sem limite e falha se qualquer fatia crescer além do seu
+      orçamento mais uma cauda atômica;
+- [x] rodízio entre grids medido pelo harness com quatro capturas concorrentes,
+      uma delas muito mais pesada, sem starvation e sem captura perdida;
+- [x] GameTest que prova, numa grid AE2 real, que uma chave com três rotas é
+      capturada em várias fatias e ainda planeja exatamente.
+
 Pendente no R2.2:
 
-- [ ] fatia dentro de uma chave (cursor por padrão) para aproximar o p95 de 2 ms;
-- [ ] medir e exportar a fatia p95 por grid/tick, com histogramas por fase;
+- [ ] confirmar a fatia p95 de 2 ms in-game (histogramas prontos, medição ao vivo
+      pendente);
 - [ ] soak multi-grid e grid deliberadamente hostil/lenta;
 - [ ] orçamento de tick recarregável sem reiniciar o servidor;
 - [ ] cobrir o comportamento de captura no corpus diferencial, não só em unit

@@ -105,7 +105,8 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
 
     /**
      * Deterministic accounting for one capture. Total limits are checked on every edge; slice limits
-     * are checked between keys only, so a slice always reports whether it finished the key it started.
+     * are checked between units only - one key lookup or one pattern - so the work a slice cannot
+     * interrupt is one atomic tail, and that tail is reported instead of being smoothed away.
      */
     static final class CaptureBudget {
         private static final long EDGE_BYTES = 64;
@@ -139,11 +140,16 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         }
 
         /**
-         * Whether the current slice used its allowance. Checked between keys, so a slice that already
-         * started a key always finishes it and progress never depends on wall-clock resolution.
+         * Whether the current slice used its allowance. Checked between units, so a slice that already
+         * started one always finishes it and progress never depends on wall-clock resolution.
          */
         boolean sliceExhausted() {
             return sliceEdgeCount >= sliceEdges || System.nanoTime() - sliceStarted >= sliceNanos;
+        }
+
+        /** Edges the current slice really consumed, including the atomic tail it could not interrupt. */
+        int sliceEdgesUsed() {
+            return sliceEdgeCount;
         }
 
         void checkpoint() {

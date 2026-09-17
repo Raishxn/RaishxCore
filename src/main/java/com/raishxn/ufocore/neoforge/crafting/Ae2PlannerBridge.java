@@ -47,6 +47,10 @@ import org.slf4j.Logger;
  * and {@link #tick()} keeps feeding that capture on later ticks. A capture that finishes inside the
  * request's own slice behaves exactly like before, so the common case keeps its same-tick latency.
  *
+ * <p>A slice may end inside a key, between two of its patterns, so the time one grid may hold the
+ * server thread no longer grows with how many patterns a single key has. Every slice is recorded in
+ * {@link CaptureSliceMetrics}, which is what makes the measured p95 available to diagnostics.
+ *
  * <p>A request handed to a worker never touches the world: the snapshot, the inventory copy and the
  * patterns are immutable, and native handles are only read on the server thread to rebuild the plan.
  */
@@ -207,8 +211,12 @@ public final class Ae2PlannerBridge {
     }
 
     private void settleSlice(PendingCapture pending, long reservation) {
-        tickBudget().settle(reservation, pending.machine().lastSliceNanos());
+        CooperativeGraphCapture<IPatternDetails> machine = pending.machine();
+        long spent = machine.lastSliceNanos();
+        tickBudget().settle(reservation, spent);
         captureSlices++;
+        metrics().recordSlice(spent, machine.lastSliceEdges(), machine.lastKeyNanos(),
+                machine.lastPatternNanos(), machine.lastPublishNanos());
     }
 
     /** Publishes a complete capture. A partial graph is never cached and never planned. */
@@ -260,9 +268,13 @@ public final class Ae2PlannerBridge {
         lastStatus = "ae2: " + reason;
     }
 
-    /** Advances every pending capture for one tick, in rotating order so no grid starves another. */
-    void advanceCaptures() {
-        if (captures.isEmpty()) return;
+    /**
+     * Advances every pending capture for one tick, in rotating order so no grid starves another, and
+     * reports how many slices it ran so an idle tick is never recorded as a capture sample.
+     */
+    int advanceCaptures() {
+        if (captures.isEmpty()) return 0;
+        int slices = 0;
         List<Map.Entry<AEKey, PendingCapture>> order = new ArrayList<>(captures.entrySet());
         int start = Math.floorMod(rotation++, order.size());
         for (int index = 0; index < order.size(); index++) {
@@ -276,17 +288,26 @@ public final class Ae2PlannerBridge {
                 continue;
             }
             advance(entry.getKey(), pending);
+            slices++;
         }
+        return slices;
     }
 
     /** Opens a new shared capture budget and feeds every pending capture once. Called every tick. */
     public static void tick() {
         tickBudget().beginTick();
-        for (Ae2PlannerBridge bridge : ACTIVE) bridge.advanceCaptures();
+        int slices = 0;
+        for (Ae2PlannerBridge bridge : ACTIVE) slices += bridge.advanceCaptures();
+        // One sample per tick that really captured something, so idle ticks cannot flatter the p95.
+        if (slices > 0) metrics().recordTick(tickBudget().spentThisTick());
     }
 
     private static CaptureBudgetPool tickBudget() {
         return TickBudget.INSTANCE;
+    }
+
+    private static CaptureSliceMetrics metrics() {
+        return CaptureMetrics.INSTANCE;
     }
 
     private void settle(Ae2PlanningSnapshot snapshot, Waiter waiter) {
@@ -526,7 +547,8 @@ public final class Ae2PlannerBridge {
                 requestStats.cancelled(), workers.getActiveCount(), workers.getQueue().size(),
                 backpressureRejections, circuitRejections, circuit.state().name(), circuit.consecutiveFailures(),
                 captures.size(), deferredRequests, captureSlices, captureCancellations, capturedPatterns,
-                snapshots.size(), snapshots.bytes(), snapshots.evictions(), budget.remainingNanos());
+                snapshots.size(), snapshots.bytes(), snapshots.evictions(), budget.remainingNanos(),
+                metrics().snapshot());
     }
 
     public record Diagnostics(long revision, long cacheHits, long cacheMisses, String status,
@@ -536,7 +558,8 @@ public final class Ae2PlannerBridge {
                               long circuitRejections, String circuitState, int consecutiveFailures,
                               int pendingCaptures, long deferredRequests, long captureSlices,
                               long captureCancellations, int capturedPatterns, int cachedSnapshots,
-                              long cacheBytes, long cacheEvictions, long tickBudgetRemainingNanos) {}
+                              long cacheBytes, long cacheEvictions, long tickBudgetRemainingNanos,
+                              CaptureSliceMetrics.Snapshot captureMetrics) {}
 
     private record RequestKey(long revision, String target, long amount, CalculationStrategy strategy,
                               Map<String, UfoAmount> inventory, CoreConfig.PlannerPolicy policy) {}
@@ -653,6 +676,11 @@ public final class Ae2PlannerBridge {
     private static final class TickBudget {
         private static final CaptureBudgetPool INSTANCE = new CaptureBudgetPool(
                 Duration.ofMillis(CoreConfig.plannerPolicy().snapshotTickBudgetMillis()));
+    }
+
+    /** Server-wide capture metrics: the budget they describe is server-wide too. */
+    private static final class CaptureMetrics {
+        private static final CaptureSliceMetrics INSTANCE = new CaptureSliceMetrics();
     }
 
     private static final class WorkerPool {

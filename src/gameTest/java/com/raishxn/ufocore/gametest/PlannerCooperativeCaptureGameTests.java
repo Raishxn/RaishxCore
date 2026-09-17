@@ -20,7 +20,8 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
  * Cooperative capture against a real AE2 grid. A one-edge slice forces the capture to span ticks, so
  * these tests prove that a deferred request is still planned exactly, that a grid mutation during the
  * capture hands the request to AE2 instead of planning a stale graph, and that the per-grid capture
- * cap degrades to AE2 rather than queueing without bound.
+ * cap degrades to AE2 rather than queueing without bound. A key with several routes proves the slice
+ * is interruptible inside one key, not only between keys.
  *
  * <p>Each scenario owns its own batch because a batch is the isolation unit for grid and config state.
  */
@@ -30,6 +31,7 @@ public final class PlannerCooperativeCaptureGameTests {
     private static final String SLICED = "planner_capture_sliced";
     private static final String MUTATION = "planner_capture_mutation";
     private static final String CAP = "planner_capture_cap";
+    private static final String FAT_KEY = "planner_capture_fat_key";
     private static ModConfigSpec.IntValue sliceEdges;
     private static ModConfigSpec.IntValue pendingCaptures;
     private static int originalSliceEdges;
@@ -48,6 +50,11 @@ public final class PlannerCooperativeCaptureGameTests {
 
     @AfterBatch(batch = CAP)
     public static void afterCap(ServerLevel level) {
+        cleanup();
+    }
+
+    @AfterBatch(batch = FAT_KEY)
+    public static void afterFatKey(ServerLevel level) {
         cleanup();
     }
 
@@ -136,6 +143,36 @@ public final class PlannerCooperativeCaptureGameTests {
                 LogUtils.getLogger().info("Cooperative capture: second target served by AE2 at the cap");
                 succeed(helper);
             });
+        });
+    }
+
+    @GameTest(template = "empty", batch = FAT_KEY, timeoutTicks = 600)
+    public static void aKeyWithSeveralRoutesIsCapturedAcrossSeveralSlices(GameTestHelper helper) {
+        fixture = new PlannerGameTests.Fixture(helper);
+        // Three routes for the same product: the target key alone carries three patterns, so a slice
+        // that could only end between keys would have to walk all of them in one call.
+        fixture.addPattern(fixture.pattern(1));
+        fixture.addPattern(fixture.pattern(2));
+        fixture.addPattern(fixture.pattern(3));
+        fixture.register();
+        forceSlicedCapture(helper);
+
+        var deferred = fixture.request(8, CalculationStrategy.REPORT_MISSING_ITEMS);
+        helper.assertTrue(!deferred.isDone(), "a one-edge slice must defer a multi-pattern key");
+        await(helper, deferred, plan -> {
+            helper.assertTrue(!plan.simulation() && plan.usedItems().get(fixture.raw) == 8,
+                    "the sliced capture must still choose the cheapest route, got: "
+                            + plan.usedItems().get(fixture.raw));
+            helper.assertTrue(fixture.diagnostics().capturedPatterns() == 3,
+                    "every route of the fat key must be captured, got: "
+                            + fixture.diagnostics().capturedPatterns());
+            helper.assertTrue(fixture.diagnostics().captureSlices() >= 4,
+                    "each pattern of one key must be its own slice, got: "
+                            + fixture.diagnostics().captureSlices());
+            helper.assertTrue(fixture.diagnostics().status().equals("COMPLETE"),
+                    "the plan must come from the Core planner, got: " + fixture.diagnostics().status());
+            LogUtils.getLogger().info("Cooperative capture: a key with three routes sliced per pattern");
+            succeed(helper);
         });
     }
 

@@ -138,6 +138,17 @@ tasks.register('plannerDifferential', JavaExec) {
     jvmArgs '-Xms256m', '-Xmx1g'
 }
 
+// Capture slice harness: drives the production capture machine in bounded slices, gates the
+// deterministic slicing invariants and reports the measured slice p50/p95/p99 per grid and per tick.
+tasks.register('plannerCaptureSlices', JavaExec) {
+    group = 'verification'
+    description = 'Measures capture slice percentiles and gates the slicing invariants.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.raishxn.ufocore.neoforge.crafting.CaptureSliceHarness'
+    args layout.buildDirectory.file('reports/planner/capture-slices.txt').get().asFile.absolutePath
+    jvmArgs '-Xms256m', '-Xmx1g'
+}
+
 def generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
     def replaceProperties = [
             minecraft_version_range: minecraft_version_range,

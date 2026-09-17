@@ -44,6 +44,10 @@ calculations to AE2 and cancels calculations already submitted to the Core.
 Graph capture is cooperative: a request gets one bounded slice inside a budget
 shared by every grid, and a capture that does not finish is resumed on later
 ticks while AE2 holds a deferred future. Running out of tick budget only defers.
+A slice may end inside a key, between two of its patterns, so the time one grid
+retains the server thread does not grow with how many patterns a single key has;
+`./gradlew plannerCaptureSlices` reports the measured slice and tick percentiles
+and gates the invariant that no slice exceeds its allowance plus one atomic tail.
 A graph decline, an unrepresentable pattern or a full worker queue delegates to
 AE2; a deferred request whose capture was discarded is handed to AE2's planner
 with the reason recorded in the diagnostics, and that fallback is never reported
