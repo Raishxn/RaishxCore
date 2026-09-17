@@ -1,0 +1,114 @@
+package com.raishxn.ufocore.neoforge.crafting;
+
+import java.util.Locale;
+
+/**
+ * Stable external rendering of {@link Ae2PlannerBridge.Diagnostics}.
+ *
+ * <p>The diagnostics were complete but only reachable from inside the process, which the roadmap
+ * lists as the missing exporter. Keys are grouped rather than flattened, an absent plan is reported
+ * as {@code null} instead of as zero, and the schema version travels with the payload so a consumer
+ * can tell when a field moves.
+ */
+public final class PlannerDiagnosticsReport {
+
+    /** Bumped when a consumer would have to read the payload differently. */
+    public static final int SCHEMA_VERSION = 1;
+
+    private PlannerDiagnosticsReport() {
+    }
+
+    public static String toJson(Ae2PlannerBridge.Diagnostics diagnostics) {
+        CaptureSliceMetrics.Snapshot metrics = diagnostics.captureMetrics();
+        StringBuilder json = new StringBuilder(768);
+        json.append("{\"schema\":").append(SCHEMA_VERSION)
+                .append(",\"revision\":").append(diagnostics.revision())
+                .append(",\"status\":\"").append(escape(diagnostics.status())).append('"');
+
+        json.append(",\"requests\":{\"inFlight\":").append(diagnostics.inFlightRequests())
+                .append(",\"submitted\":").append(diagnostics.submittedRequests())
+                .append(",\"deduplicated\":").append(diagnostics.deduplicatedRequests())
+                .append(",\"cancelled\":").append(diagnostics.cancelledRequests())
+                .append(",\"deferred\":").append(diagnostics.deferredRequests()).append('}');
+
+        json.append(",\"cache\":{\"hits\":").append(diagnostics.cacheHits())
+                .append(",\"misses\":").append(diagnostics.cacheMisses())
+                .append(",\"snapshots\":").append(diagnostics.cachedSnapshots())
+                .append(",\"bytes\":").append(diagnostics.cacheBytes())
+                .append(",\"evictions\":").append(diagnostics.cacheEvictions()).append('}');
+
+        json.append(",\"workers\":{\"active\":").append(diagnostics.activeWorkers())
+                .append(",\"queued\":").append(diagnostics.queuedRequests()).append('}');
+
+        json.append(",\"pressure\":{\"backpressureRejections\":").append(diagnostics.backpressureRejections())
+                .append(",\"circuitState\":\"").append(escape(diagnostics.circuitState()))
+                .append("\",\"circuitRejections\":").append(diagnostics.circuitRejections())
+                .append(",\"consecutiveFailures\":").append(diagnostics.consecutiveFailures()).append('}');
+
+        json.append(",\"capture\":{\"pending\":").append(diagnostics.pendingCaptures())
+                .append(",\"slices\":").append(diagnostics.captureSlices())
+                .append(",\"cancellations\":").append(diagnostics.captureCancellations())
+                .append(",\"patterns\":").append(diagnostics.capturedPatterns())
+                .append(",\"tickBudgetRemainingNanos\":").append(diagnostics.tickBudgetRemainingNanos())
+                .append('}');
+
+        json.append(",\"percentiles\":{\"slices\":").append(metrics.slices())
+                .append(",\"sliceP50Nanos\":").append(metrics.sliceP50Nanos())
+                .append(",\"sliceP95Nanos\":").append(metrics.sliceP95Nanos())
+                .append(",\"sliceP99Nanos\":").append(metrics.sliceP99Nanos())
+                .append(",\"sliceMaxNanos\":").append(metrics.sliceMaxNanos())
+                .append(",\"ticks\":").append(metrics.ticks())
+                .append(",\"tickP50Nanos\":").append(metrics.tickP50Nanos())
+                .append(",\"tickP95Nanos\":").append(metrics.tickP95Nanos())
+                .append(",\"tickP99Nanos\":").append(metrics.tickP99Nanos())
+                .append(",\"overflowSamples\":").append(metrics.overflowSamples()).append('}');
+
+        // Before the first plan there is nothing to report, and saying zero would be a lie a consumer
+        // would read as a measurement.
+        PlanningResultDiagnostics lastPlan = lastPlan(diagnostics);
+        if (lastPlan == null) {
+            json.append(",\"lastPlan\":null");
+        } else {
+            json.append(",\"lastPlan\":{\"graphRevision\":").append(lastPlan.graphRevision())
+                    .append(",\"operations\":").append(lastPlan.operations())
+                    .append(",\"maximumDepth\":").append(lastPlan.maximumDepth())
+                    .append(",\"elapsedNanos\":").append(lastPlan.elapsedNanos())
+                    .append('}');
+        }
+        return json.append('}').toString();
+    }
+
+    /** The plan diagnostics as this renderer needs them, so the shape is pinned in one place. */
+    private record PlanningResultDiagnostics(long graphRevision, long operations, int maximumDepth,
+                                             long elapsedNanos) {
+    }
+
+    private static PlanningResultDiagnostics lastPlan(Ae2PlannerBridge.Diagnostics diagnostics) {
+        var plan = diagnostics.lastPlan();
+        return plan == null ? null
+                : new PlanningResultDiagnostics(plan.graphRevision(), plan.operations(),
+                        plan.maximumDepth(), plan.elapsedNanos());
+    }
+
+    private static String escape(String value) {
+        StringBuilder escaped = new StringBuilder(value.length() + 8);
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            switch (character) {
+                case '"' -> escaped.append("\\\"");
+                case '\\' -> escaped.append("\\\\");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                default -> {
+                    if (character < 0x20) {
+                        escaped.append(String.format(Locale.ROOT, "\\u%04x", (int) character));
+                    } else {
+                        escaped.append(character);
+                    }
+                }
+            }
+        }
+        return escaped.toString();
+    }
+}
