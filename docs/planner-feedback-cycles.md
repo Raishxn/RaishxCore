@@ -95,20 +95,66 @@ the cycle guard refuses the plan — which is exactly what happens today.
 The chain is built in one pass by splitting the inputs into those claimed outside the
 pattern and those claimed after it, then assembling `outside → pattern → feeding → next`.
 
-## What the other three need on top
+## The conversion ring needed nothing
 
-- **`catalyst/raw-feedback-loop`** (conservative feedback): the cycle spans several
-  keys, so the split above is not enough. It needs the strongly connected component,
-  a cycle iteration derived from it, and one member treated as the seed. The balance and
-  seed reasoning are the same as for self-growth, applied to the component instead of a
-  single pattern.
-- **`catalyst/lossy-feedback-loop`**: the cycle loses a fixed amount per turn, so a
-  single seed does not suffice. The shortage is `seed + losses × turns` and has to be
-  reported as such.
-- **`cycle/conversion-ring`**: pure conversion with no gain, `1 A = 9 B = 81 C`. Nothing
-  is created, so feasibility needs the ring's exchange rates compared against external
-  demand. AE2-VM solves this with exact rational arithmetic (`computeConversionRingMissing`)
-  because a floating comparison here produces a plan that cannot be executed.
+`cycle/conversion-ring` was declared a limitation on the assumption that a ring of
+conversions is beyond the planner. It never was. The cycle guard already refuses a route
+that reaches into a key currently being expanded, and the leaf-cost pass already leaves
+keys on a cycle out of the cost map instead of failing outright. The ring was therefore a
+safe decline that happened to be a capability the engine had all along and had simply
+never claimed.
+
+Turning it on cost no engine change: the planner returns the corpus minimum, one extra
+unit of either entry key, with overhead `1.000`, and the independent replay funds the ring
+and confirms the plan. AE2-VM solves the same shape with exact rational arithmetic; a
+floating comparison there would produce a plan that cannot be executed. The guard here is
+integral instead, so the question does not arise.
+
+## What the two catalyst loops need on top
+
+Both span several keys and both recycle one of them, so the self-feeding split is not
+enough: it is the strongly connected component that has to be reasoned about, with one
+member treated as the seed.
+
+The naive model, "seed plus a fixed loss per turn", is **unsound**, and the corpus proves
+it rather than an argument. `catalyst/lossy-feedback-loop` is `3 A -> 2 B`, `2 B -> 1 D +
+2 A`: one turn nets `-1 A` and yields `1 D`. For eight turns that model demands
+`3 + 8 = 11 A`, but the true minimum is `10`.
+
+The difference is that the last turn never has to be replenished: it may spend its seed
+and finish. What binds is the deepest point of the turn, not the total. Writing `c` for the
+net consumed per turn, `d` for how much of the key must be in hand at the worst moment of a
+turn, and `n` for turns:
+
+```text
+seed >= (n-1)·c + d
+```
+
+With `c = 1`, `d = 3`, `n = 8` this is `10`, and with `c = 0`, `d = 1` — the conservative
+loop, which returns the seed in full — it is `1`, matching `catalyst/raw-feedback-loop`.
+Self-growth is the same formula with `c` negative, which is why `1 A -> 2 A` needs a seed
+of one and no more.
+
+The `(n-1)` is not a rounding detail: charging the last turn makes the planner report
+`11 A` where `10` suffices, and the corpus witness pins the minimum, so it would be caught.
+
+## Measured, before implementing any of it
+
+Declaring both families required without any engine change — the probe that establishes
+what is actually missing — gives:
+
+```text
+catalyst/raw-feedback-loop/missing    missing={D=8}   overhead=8.000
+catalyst/raw-feedback-loop/minimum    FALSE_NEGATIVE  reported shortage {D=7} on a feasible scenario
+catalyst/lossy-feedback-loop/missing  missing={A=16}  overhead=8.000
+catalyst/lossy-feedback-loop/minimum  FALSE_NEGATIVE  reported shortage {A=14} on a feasible scenario
+```
+
+No false positives: the planner never claims a plan it cannot execute, it only refuses
+work it could do. It treats the recycled key as ordinary stock and reaches for the
+byproduct — `D` — as if it had to come from outside, which is where the factor of eight
+comes from. That is the failure to fix, and it is a safe one, which is why these families
+stay declared limitations until the component arithmetic above is in.
 
 ## Oracle support
 
@@ -143,7 +189,13 @@ same pools, without the loop.
 
 ## Gates
 
-The corpus moves `cycle/self-growth` from declared limitation to required, the
-`MINIMAL_SHORTAGE_CASES` list gains its missing mode so the seed shortage is pinned,
-and the refill path must complete — which is what proves the reported seed is both
-necessary and sufficient.
+The corpus moves `cycle/self-growth` and `cycle/conversion-ring` from declared limitations
+to required — `required supported=45/45`, `limitation cases supported but not claimed=0/6`
+— and the `MINIMAL_SHORTAGE_CASES` list gains the missing mode of each, so the seed
+shortage is pinned. The refill path must complete, which is what proves a reported seed is
+both necessary and sufficient.
+
+The two catalyst loops stay declared limitations until the component arithmetic lands.
+A declared limitation is a promise the opposite way: the gate asserts the planner must
+**not** claim them, so neither the over-report above nor a premature activation can pass
+unnoticed.
