@@ -3,22 +3,17 @@ package com.raishxn.ufocore.neoforge.crafting;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.stacks.AEKey;
-import appeng.crafting.pattern.AECraftingPattern;
-import appeng.me.service.CraftingService;
 import com.raishxn.ufocore.api.amount.UfoAmount;
-import com.raishxn.ufocore.api.crafting.planner.CraftingPattern;
 import com.raishxn.ufocore.api.crafting.planner.ImmutableCraftingGraph;
+import com.raishxn.ufocore.api.crafting.planner.PlanningCancellation;
 import java.io.Serial;
 import java.time.Duration;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
@@ -28,14 +23,18 @@ import net.minecraft.world.level.Level;
 /**
  * Server-thread capture boundary. Only String keys and exact amounts enter the mathematical graph.
  * Native handles are used solely to build the final AE2 plan, never queried by the planning worker.
+ *
+ * <p>A snapshot is published only after a complete capture, and it carries the conservative byte
+ * weight the capture accumulated so the cache can be bounded by memory, not only by entry count.
  */
 public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String target,
                                   Map<String, AEKey> keys, Map<AEKey, String> keyIds,
                                   Map<String, IPatternDetails> patterns, Map<String, Integer> amountsPerByte,
-                                  boolean multiplePaths) {
+                                  boolean multiplePaths, long estimatedBytes) {
     public Ae2PlanningSnapshot {
         keys = Map.copyOf(keys); keyIds = Map.copyOf(keyIds); patterns = Map.copyOf(patterns);
         amountsPerByte = Map.copyOf(amountsPerByte);
+        if (estimatedBytes < 0L) throw new IllegalArgumentException("estimatedBytes must be non-negative");
     }
 
     /** Throws Declined before publishing anything if any reachable pattern needs richer semantics. */
@@ -43,107 +42,71 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         return capture(level, service, target, revision, CaptureLimits.DEFAULT);
     }
 
-    /** Throws Declined before publishing anything if semantics or configured budgets cannot be honored. */
+    /**
+     * One-shot capture: drains the whole graph in a single unbounded slice. The bridge uses the
+     * cooperative path instead, so this entry point only serves callers that accept a blocking capture.
+     */
     public static Ae2PlanningSnapshot capture(Level level, ICraftingService service, AEKey target, long revision,
                                                CaptureLimits limits) {
-        CaptureBudget budget = new CaptureBudget(limits);
-        Map<AEKey, String> ids = new HashMap<>();
-        Map<String, AEKey> keys = new HashMap<>();
-        Map<String, Integer> byteAmounts = new HashMap<>();
-        Map<String, IPatternDetails> handles = new LinkedHashMap<>();
-        Map<String, CraftingPattern<String>> patterns = new LinkedHashMap<>();
-        Set<AEKey> visited = new HashSet<>();
-        ArrayDeque<AEKey> pending = new ArrayDeque<>();
-        pending.add(target);
-        boolean alternatives = false;
-        while (!pending.isEmpty()) {
-            budget.checkpoint();
-            AEKey output = pending.removeFirst();
-            if (!visited.add(output)) continue;
-            id(output, level, ids, keys, byteAmounts, budget);
-            if (service.canEmitFor(output)) throw new Declined("crafting emitter");
-            var recipes = service.getCraftingFor(output);
-            alternatives |= recipes.size() > 1;
-            for (IPatternDetails pattern : recipes) {
-                budget.edge();
-                if (pattern instanceof AECraftingPattern crafting
-                        && (crafting.canSubstitute() || crafting.canSubstituteFluids())) {
-                    throw new Declined("substitution pattern");
-                }
-                var definition = pattern.getDefinition();
-                if (definition == null) throw new Declined("pattern without stable definition");
-                String patternId = canonical(definition.toTagGeneric(level.registryAccess()));
-                if (patterns.containsKey(patternId)) continue;
-                budget.pattern(patternId);
-                Map<String, UfoAmount> inputs = new HashMap<>();
-                Map<String, UfoAmount> outputs = new HashMap<>();
-                for (var input : pattern.getInputs()) {
-                    budget.edge();
-                    var options = input.getPossibleInputs();
-                    if (options.length != 1 || options[0].amount() <= 0 || input.getMultiplier() <= 0
-                            || input.getRemainingKey(options[0].what()) != null
-                            || !input.isValid(options[0].what(), level)) {
-                        throw new Declined("non-exact or remainder input");
-                    }
-                    AEKey key = options[0].what();
-                    String inputId = id(key, level, ids, keys, byteAmounts, budget);
-                    UfoAmount amount = UfoAmount.of(options[0].amount()).multiply(input.getMultiplier());
-                    inputs.merge(inputId, amount, UfoAmount::add);
-                    pending.addLast(key);
-                }
-                for (var result : pattern.getOutputs()) {
-                    budget.edge();
-                    if (result.amount() <= 0) throw new Declined("invalid output");
-                    String outputId = id(result.what(), level, ids, keys, byteAmounts, budget);
-                    outputs.merge(outputId, UfoAmount.of(result.amount()), UfoAmount::add);
-                }
-                if (outputs.isEmpty() || inputs.keySet().stream().anyMatch(outputs::containsKey)) {
-                    throw new Declined("feedback or catalyst pattern");
-                }
-                String primary = id(pattern.getPrimaryOutput().what(), level, ids, keys, byteAmounts, budget);
-                int priority = Integer.MIN_VALUE;
-                if (service instanceof CraftingService nativeService) {
-                    for (var provider : nativeService.getProviders(pattern)) {
-                        priority = Math.max(priority, provider.getPatternPriority());
-                    }
-                }
-                patterns.put(patternId, new CraftingPattern<>(patternId,
-                        priority == Integer.MIN_VALUE ? 0 : priority, inputs, outputs, Set.of(primary)));
-                handles.put(patternId, pattern);
-            }
+        var source = new Ae2CaptureSource(level, service);
+        var capture = new CooperativeGraphCapture<>(source, source.targetId(target), revision, limits,
+                PlanningCancellation.NEVER);
+        var slice = new CooperativeGraphCapture.Slice(Long.MAX_VALUE, Integer.MAX_VALUE);
+        while (capture.advance(slice) == CooperativeGraphCapture.Status.YIELDED) {
+            // An unbounded slice only yields if a total limit is about to be refused; advance reports it.
         }
-        var graph = ImmutableCraftingGraph.create(revision, Comparator.<String>naturalOrder(), patterns.values());
-        budget.checkpoint();
-        return new Ae2PlanningSnapshot(graph, ids.get(target), keys, ids, handles, byteAmounts, alternatives);
+        return of(capture.result(), source.keys());
     }
 
-    private static String id(AEKey key, Level level, Map<AEKey, String> ids, Map<String, AEKey> keys,
-                              Map<String, Integer> byteAmounts, CaptureBudget budget) {
-        String known = ids.get(key);
-        if (known != null) return known;
-        String id = canonical(key.toTagGeneric(level.registryAccess()));
-        AEKey previous = keys.putIfAbsent(id, key);
-        if (previous != null && !previous.equals(key)) throw new Declined("ambiguous key serialization");
-        budget.key(id);
-        ids.put(key, id);
-        int amount = key.getAmountPerByte();
-        if (amount <= 0) throw new Declined("invalid byte conversion");
-        byteAmounts.put(id, amount);
-        return id;
+    /**
+     * Publishes a completed cooperative capture. A graph key without a native handle would make the
+     * final AE2 plan impossible to rebuild, so it is refused instead of being dropped silently.
+     */
+    public static Ae2PlanningSnapshot of(CooperativeGraphCapture.Captured<IPatternDetails> captured,
+                                         Map<String, AEKey> nativeKeys) {
+        Map<String, AEKey> keys = new LinkedHashMap<>();
+        Map<AEKey, String> keyIds = new HashMap<>();
+        captured.keys().forEach((id, details) -> {
+            AEKey key = nativeKeys.get(id);
+            if (key == null) throw new IllegalStateException("captured key without a native handle: " + id);
+            keys.put(id, key);
+            keyIds.put(key, id);
+        });
+        return new Ae2PlanningSnapshot(captured.graph(), captured.target(), keys, keyIds, captured.handles(),
+                captured.amountsPerByte(), captured.multiplePaths(), captured.estimatedBytes());
     }
 
-    public record CaptureLimits(Duration timeout, int maxEdges, int maxKeys, long maxEstimatedBytes) {
+    /**
+     * Limits of one capture. Total limits bound the whole capture, across ticks; slice limits bound one
+     * slice. The edge allowance makes a slice reproducible, the time allowance keeps one unusually fat
+     * key from monopolizing a tick, and the byte ceiling bounds the cache a snapshot may occupy.
+     */
+    public record CaptureLimits(Duration timeout, int maxEdges, int maxKeys, long maxEstimatedBytes,
+                                long sliceNanos, int sliceEdges) {
+        /** Default per-grid slice: 2 ms and 512 edges, the roadmap target for one grid and tick. */
+        public static final long DEFAULT_SLICE_NANOS = 2_000_000L;
+        public static final int DEFAULT_SLICE_EDGES = 512;
         private static final CaptureLimits DEFAULT =
                 new CaptureLimits(Duration.ofMillis(50), 100_000, 25_000, 64L * 1024 * 1024);
 
+        /** One-shot limits: a single unbounded slice under the same total ceilings. */
+        public CaptureLimits(Duration timeout, int maxEdges, int maxKeys, long maxEstimatedBytes) {
+            this(timeout, maxEdges, maxKeys, maxEstimatedBytes, Long.MAX_VALUE, Integer.MAX_VALUE);
+        }
+
         public CaptureLimits {
             if (timeout == null || timeout.isZero() || timeout.isNegative()
-                    || maxEdges < 1 || maxKeys < 1 || maxEstimatedBytes < 1) {
+                    || maxEdges < 1 || maxKeys < 1 || maxEstimatedBytes < 1
+                    || sliceNanos < 1L || sliceEdges < 1) {
                 throw new IllegalArgumentException("snapshot limits must be positive");
             }
         }
     }
 
+    /**
+     * Deterministic accounting for one capture. Total limits are checked on every edge; slice limits
+     * are checked between keys only, so a slice always reports whether it finished the key it started.
+     */
     static final class CaptureBudget {
         private static final long EDGE_BYTES = 64;
         private static final long KEY_OVERHEAD_BYTES = 256;
@@ -154,6 +117,10 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         private int edges;
         private int keys;
         private long estimatedBytes;
+        private long sliceStarted;
+        private long sliceNanos = Long.MAX_VALUE;
+        private int sliceEdges = Integer.MAX_VALUE;
+        private int sliceEdgeCount;
 
         CaptureBudget(CaptureLimits limits) {
             this.limits = java.util.Objects.requireNonNull(limits, "limits");
@@ -163,12 +130,29 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
             timeoutNanos = nanos;
         }
 
+        /** Starts one slice with its own edge and time allowance. */
+        void beginSlice(long nanos, int maxEdges) {
+            sliceStarted = System.nanoTime();
+            sliceNanos = nanos;
+            sliceEdges = maxEdges;
+            sliceEdgeCount = 0;
+        }
+
+        /**
+         * Whether the current slice used its allowance. Checked between keys, so a slice that already
+         * started a key always finishes it and progress never depends on wall-clock resolution.
+         */
+        boolean sliceExhausted() {
+            return sliceEdgeCount >= sliceEdges || System.nanoTime() - sliceStarted >= sliceNanos;
+        }
+
         void checkpoint() {
             if (System.nanoTime() - started >= timeoutNanos) throw new Declined("snapshot time limit");
         }
 
         void edge() {
             if (++edges > limits.maxEdges()) throw new Declined("snapshot edge limit");
+            sliceEdgeCount++;
             addBytes(EDGE_BYTES);
             checkpoint();
         }
@@ -181,6 +165,8 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         void pattern(String id) {
             addBytes(PATTERN_OVERHEAD_BYTES + stringBytes(id));
         }
+
+        long estimatedBytes() { return estimatedBytes; }
 
         private static long stringBytes(String value) {
             try { return Math.multiplyExact((long) value.length(), Character.BYTES); }

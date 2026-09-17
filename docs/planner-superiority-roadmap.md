@@ -37,6 +37,10 @@ São proibidas comparações que:
 - deduplicação de requisições equivalentes em andamento;
 - cancelamento por revisão, unload/alteração da grid, logout, desativação do
   planner e parada do servidor;
+- captura de grafo cooperativa: fatias por grid, orçamento compartilhado por tick
+  com rodízio entre grids, cache limitado por entradas **e** por bytes, cancelamento
+  em todas as transições e fallback para o AE2 somente após descartar a tentativa
+  inteira (`docs/planner-cooperative-capture.md`);
 - workers, fila, timeout, operações, profundidade, snapshot e memória
   configuráveis;
 - backpressure, limite de requisições simultâneas e circuit breaker por grid;
@@ -57,9 +61,16 @@ um subconjunto de outputs craftáveis. A ponte AE2 atualmente recusa:
 
 O algoritmo possui backtracking local limitado, mas ainda não resolve de forma
 global todos os conflitos de múltiplas rotas, ciclos, ferramentas reutilizáveis
-e estoques compartilhados. A captura do grafo alcançável ainda é monolítica no
-server thread e pode consumir até o orçamento configurado antes do trabalho
-assíncrono começar.
+e estoques compartilhados.
+
+A captura do grafo já não é monolítica: ela roda em fatias limitadas por grid
+dentro de um orçamento compartilhado por tick, e uma captura que não termina é
+retomada nos ticks seguintes (`docs/planner-cooperative-capture.md`). A fronteira
+de uma fatia continua sendo **uma chave**, então uma chave com muitos padrões
+ainda pode exceder a própria fatia; o estouro é debitado integralmente do
+orçamento compartilhado, mas a meta de p95 de 2 ms por grid/tick ainda não foi
+medida nem demonstrada por construção. Também não existem ainda histogramas por
+fase, soak multi-grid nem teste de grid hostil.
 
 O corpus diferencial de 2026-09-16 (`docs/planner-differential-corpus.md`)
 encontrou e corrigiu uma falha concreta nessa fronteira: um subproduto exigido
@@ -276,15 +287,24 @@ Nunca contar o mesmo recurso simultaneamente como consumível e reutilizável.
 
 ### Fase 1 — captura incremental
 
-1. Registrar a revisão inicial da grid e do catálogo de padrões.
-2. Percorrer chaves/padrões em fatias com orçamento em nanos e número de arestas.
-3. Reagendar continuação para o tick seguinte quando o orçamento terminar.
-4. Cancelar se revisão, grid, jogador ou lifecycle mudar.
-5. Publicar o snapshot somente quando estiver completo e consistente.
-6. Nunca inserir snapshot parcial no cache.
+Estado em 2026-09-17: os seis passos abaixo estão implementados para uma captura
+por chave (`docs/planner-cooperative-capture.md`); falta refinar a fatia para dentro
+de uma chave e medir a fatia.
+
+1. [x] Registrar a revisão inicial da grid e do catálogo de padrões.
+2. [x] Percorrer chaves/padrões em fatias com orçamento em nanos e número de arestas.
+3. [x] Reagendar continuação para o tick seguinte quando o orçamento terminar: o
+   chamador recebe um `Future` adiado e o tick seguinte retoma a captura.
+4. [x] Cancelar se revisão, grid, jogador ou lifecycle mudar, inclusive quando a
+   revisão muda enquanto a captura está aberta e sem nova requisição.
+5. [x] Publicar o snapshot somente quando estiver completo e consistente.
+6. [x] Nunca inserir snapshot parcial no cache: um cache byte-limitado só recebe
+   snapshots concluídos.
 
 Alvo padrão: até 2 ms por grid/tick, com orçamento global adicional para impedir
-que muitas grids consumam 2 ms cada no mesmo tick.
+que muitas grids consumam 2 ms cada no mesmo tick. A fatia default é 2 ms/512
+arestas por grid e o orçamento global é 4 ms por tick, com rodízio entre grids.
+O alvo de p95 medido continua pendente: uma fatia só termina entre duas chaves.
 
 Uma alternativa futura é manter snapshot imutável por eventos de mutação. Ela
 só substitui a captura incremental depois que testes provarem que nenhum evento
@@ -410,6 +430,13 @@ Substituir o status pequeno atual por categorias que não escondam riscos:
 - `INVALID_PLAN_REPLAY`;
 - `ENGINE_ERROR`;
 - `AE2_ADAPTER_UNREPRESENTABLE`.
+
+Estado em 2026-09-17: essa taxonomia substitui o status pequeno atual apenas no
+R2.3+. Até lá, a ponte publica o que já consegue distinguir: `capture deferred`
+(a captura segue em ticks seguintes), `ae2 fallback: <motivo>` (a tentativa
+Core foi descartada por inteiro e o AE2 planejou a requisição), `ae2: <motivo>`
+(a ponte recusou antes de qualquer tentativa) e os status do planner iterativo
+(`COMPLETE`, `MISSING_INGREDIENTS`, `CANCELLED`, timeout).
 
 Falso positivo é defeito crítico: o engine aceitou e entregou plano inviável,
 faltantes errados ou conservação inválida. Falso negativo é defeito distinto:
@@ -614,7 +641,8 @@ Políticas:
 - orçamento global de captura por servidor;
 - orçamento e in-flight por grid;
 - fair queue/round-robin para evitar starvation;
-- limite de cache por bytes, não só por quantidade de entradas;
+- [x] limite de cache por bytes, não só por quantidade de entradas
+  (`planner.snapshot.cacheBytes`, 128 MiB default, com evicção LRU);
 - admissão anterior à alocação grande;
 - circuit breaker por grid e por engine;
 - nenhuma rejeição por fila pode criar pico maior via fallback síncrono;
@@ -687,9 +715,17 @@ Thunderbolt foi executada, portanto nenhuma afirmação de paridade é feita.
 
 ### Gate O — operação superior
 
-- [ ] Captura incremental com fatia p95 ≤ 2 ms por grid/tick e orçamento global.
-- [ ] Multi-grid não apresenta starvation nem contaminação de circuit breaker.
-- [ ] Cancelamento/lifecycle em todas as fases.
+Estado em 2026-09-17: captura cooperativa, orçamento global e cancelamento por
+fase existem e têm testes, mas a fatia de 2 ms **não foi medida** e só termina
+entre duas chaves, então os dois primeiros itens seguem abertos.
+
+- [ ] Captura incremental com fatia p95 ≤ 2 ms por grid/tick e orçamento global
+      (fatias e orçamento implementados; p95 pendente de medição e a fatia ainda
+      termina por chave).
+- [ ] Multi-grid não apresenta starvation nem contaminação de circuit breaker
+      (rodízio implementado; soak multi-grid pendente).
+- [x] Cancelamento/lifecycle em todas as fases da captura e do planejamento
+      (sessões multi-engine entram no R2.7).
 - [ ] Engine não cooperativo isolado sem bloquear AE2 ou nova grid.
 - [ ] Métricas p50/p95/p99, fila, cache e memória disponíveis.
 
@@ -745,11 +781,29 @@ Pendente no R2.1:
 
 ### R2.2 — captura cooperativa
 
-- state machine incremental;
-- orçamento global/por grid;
-- cache por revisão e bytes;
-- cancelamento em todas as transições;
-- testes de mutação durante captura.
+Concluído e verificado neste recorte (`docs/planner-cooperative-capture.md`):
+
+- [x] state machine incremental e retomável, independente do AE2, que nunca
+      publica estado parcial;
+- [x] orçamento por grid (2 ms/512 arestas por fatia) e orçamento global por tick
+      (4 ms) com rodízio entre grids e estouro debitado integralmente;
+- [x] cache por revisão e por bytes, além da contagem de entradas;
+- [x] cancelamento em todas as transições: revisão, grid, jogador, lifecycle,
+      kill-switch, orçamento e cancelamento do próprio chamador;
+- [x] testes de mutação durante captura: unitário (cancelamento e recusa entre
+      fatias) e GameTest (mudança de provider durante captura aberta);
+- [x] futura adiada entregue ao AE2, com fallback do AE2 somente depois de
+      descartar a tentativa inteira e com o motivo registrado no status;
+- [x] testes de mutação durante captura e de captura que atravessa ticks.
+
+Pendente no R2.2:
+
+- [ ] fatia dentro de uma chave (cursor por padrão) para aproximar o p95 de 2 ms;
+- [ ] medir e exportar a fatia p95 por grid/tick, com histogramas por fase;
+- [ ] soak multi-grid e grid deliberadamente hostil/lenta;
+- [ ] orçamento de tick recarregável sem reiniciar o servidor;
+- [ ] cobrir o comportamento de captura no corpus diferencial, não só em unit
+      tests e GameTests.
 
 ### R2.3 — modelo semântico
 
@@ -799,6 +853,9 @@ Pendente no R2.1:
   de plataforma; decidir apenas após benchmark do solver próprio limitado.
 - Snapshot mantido por eventos é mais barato, mas arriscado se algum evento do
   AE2 não for observado; captura incremental é o baseline seguro.
+- A fatia da captura termina entre chaves: uma única chave com muitos padrões pode
+  exceder seu orçamento de 2 ms. O estouro é debitado do orçamento compartilhado do
+  tick, mas o p95 só poderá ser prometido depois de fatiar dentro da chave.
 - Otimizar faltantes pode competir com latência. O contrato deve permitir gap
   explícito em grafos grandes, nunca lista aparentemente ótima sem prova.
 - Planejar quantidade `BigInteger` não significa que toda fronteira AE2 aceite

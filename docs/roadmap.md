@@ -33,15 +33,20 @@ against the same frozen corpus and environment. AE2-VM is also a fixed
 specialized baseline for compiled bytecode, shared-DAG aggregation and warm-cache
 performance.
 
-- [ ] Replace monolithic server-thread graph capture with incremental snapshots
-      or cooperative capture budgeted across ticks.
+- [x] Replace monolithic server-thread graph capture with cooperative capture
+      budgeted across ticks: resumable state machine, per-grid slice, shared tick
+      budget with rotation, byte-bounded cache, cancellation in every transition
+      and AE2 fallback only after the whole attempt was discarded
+      ([planner-cooperative-capture.md](planner-cooperative-capture.md)). The
+      2 ms slice p95 is not measured yet and a slice still ends between keys.
 - [x] Deduplicate equivalent in-flight requests with independent caller futures.
 - [x] Cancel obsolete work on graph revision, grid unload/change, logout,
       planner disablement and server stop.
 - [x] Configure worker, queue, timeout, graph and estimated-memory limits.
 - [x] Add per-grid backpressure and a circuit breaker.
 - [ ] Expose latency, queue, cache, decline, timeout and fallback metrics
-      (request, deduplication, cancellation, worker and queue counters are complete).
+      (request, deduplication, cancellation, worker, queue and capture counters are
+      complete; per-phase timings and histograms are not).
 - [ ] Test several grids and requests concurrently.
 - [ ] Make the benchmark a regression gate.
 - [x] Add a neutral capability corpus, a common replay oracle, a production-path runner, the

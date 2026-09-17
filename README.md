@@ -33,14 +33,23 @@ Planner limits and restart semantics are documented in
 The detailed capability, differential-testing and verified-superiority plan is
 documented in
 [docs/planner-superiority-roadmap.md](docs/planner-superiority-roadmap.md).
+Cooperative graph capture, its budgets, cancellation matrix and known limits are
+documented in
+[docs/planner-cooperative-capture.md](docs/planner-cooperative-capture.md).
 
 The planner switch is a NeoForge **COMMON** config (instance-wide, not a synced
 per-world server config), read for each new request. Disabling it delegates new
 calculations to AE2 and cancels calculations already submitted to the Core.
 
-A graph decline or full worker queue delegates to AE2 before submission. After
-submission, deadlines, cooperative cancellation and unexpected runtime errors
-propagate through the returned Future; there is no automatic AE2 retry. The
+Graph capture is cooperative: a request gets one bounded slice inside a budget
+shared by every grid, and a capture that does not finish is resumed on later
+ticks while AE2 holds a deferred future. Running out of tick budget only defers.
+A graph decline, an unrepresentable pattern or a full worker queue delegates to
+AE2; a deferred request whose capture was discarded is handed to AE2's planner
+with the reason recorded in the diagnostics, and that fallback is never reported
+as a Core success. After submission, deadlines, cooperative cancellation and
+unexpected runtime errors propagate through the returned Future; there is no
+automatic AE2 retry. The
 worker records `timeout`, `cancelled` or `failed: ...` and reports unexpected
 errors once. Cancelling a queued Future prevents execution and therefore does
 not create a worker diagnostic; cancelling an active Future records cancellation

@@ -12,7 +12,7 @@ public final class CoreConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
     private static final PlannerPolicy DEFAULT_POLICY = new PlannerPolicy(
             2, 32, 2_000, 10_000_000L, 100_000, 128,
-            50, 100_000, 25_000, 64L * 1024 * 1024, 16,
+            50, 100_000, 25_000, 64L * 1024 * 1024, 16, 128L * 1024 * 1024, 2, 512, 4, 8,
             4, 3, 10_000);
 
     private static final ModConfigSpec.BooleanValue PLANNER_ENABLED = BUILDER
@@ -54,6 +54,26 @@ public final class CoreConfig {
     private static final ModConfigSpec.IntValue SNAPSHOT_CACHE_ENTRIES = BUILDER
             .comment("Maximum target-specific snapshots cached per AE2 grid revision.")
             .defineInRange("planner.snapshot.cacheEntries", DEFAULT_POLICY.snapshotCacheEntries(), 1, 256);
+    private static final ModConfigSpec.LongValue SNAPSHOT_CACHE_BYTES = BUILDER
+            .comment("Conservative estimated heap ceiling for the whole per-grid snapshot cache.",
+                    "Snapshots are evicted least-recently-used until both the entry count and this ceiling fit.")
+            .defineInRange("planner.snapshot.cacheBytes", DEFAULT_POLICY.snapshotCacheBytes(),
+                    1024L * 1024, 1024L * 1024 * 1024);
+    private static final ModConfigSpec.IntValue SNAPSHOT_SLICE_MILLIS = BUILDER
+            .comment("Main-thread time one grid may spend on one capture slice before yielding the tick.",
+                    "The capture continues on later ticks; it is never handed to AE2 just because a slice ended.")
+            .defineInRange("planner.snapshot.sliceMillis", DEFAULT_POLICY.snapshotSliceMillis(), 1, 50);
+    private static final ModConfigSpec.IntValue SNAPSHOT_SLICE_EDGES = BUILDER
+            .comment("Pattern/input/output edges one capture slice may consume.",
+                    "Bounds a slice deterministically, independent of wall-clock resolution.")
+            .defineInRange("planner.snapshot.sliceEdges", DEFAULT_POLICY.snapshotSliceEdges(), 1, 1_000_000);
+    private static final ModConfigSpec.IntValue SNAPSHOT_TICK_BUDGET_MILLIS = BUILDER
+            .comment("Shared capture budget for every grid in one server tick.",
+                    "Applied when the budget is first used; restart to change.")
+            .defineInRange("planner.snapshot.tickBudgetMillis", DEFAULT_POLICY.snapshotTickBudgetMillis(), 1, 50);
+    private static final ModConfigSpec.IntValue MAX_PENDING_CAPTURES = BUILDER
+            .comment("Captures one grid may keep in progress across ticks before further requests wait for AE2.")
+            .defineInRange("planner.snapshot.maxPendingCaptures", DEFAULT_POLICY.maxPendingCaptures(), 1, 256);
     private static final ModConfigSpec.IntValue MAX_IN_FLIGHT_PER_GRID = BUILDER
             .comment("Maximum distinct calculations in flight for one AE2 grid.",
                     "Equivalent requests still share an existing calculation at this limit.")
@@ -95,19 +115,24 @@ public final class CoreConfig {
                 PLANNER_TIMEOUT_MILLIS.get(), PLANNER_MAX_OPERATIONS.get(), PLANNER_MAX_DEPTH.get(),
                 PLANNER_CHECKPOINT_INTERVAL.get(), SNAPSHOT_TIMEOUT_MILLIS.get(), SNAPSHOT_MAX_EDGES.get(),
                 SNAPSHOT_MAX_KEYS.get(), SNAPSHOT_MAX_ESTIMATED_BYTES.get(), SNAPSHOT_CACHE_ENTRIES.get(),
+                SNAPSHOT_CACHE_BYTES.get(), SNAPSHOT_SLICE_MILLIS.get(), SNAPSHOT_SLICE_EDGES.get(),
+                SNAPSHOT_TICK_BUDGET_MILLIS.get(), MAX_PENDING_CAPTURES.get(),
                 MAX_IN_FLIGHT_PER_GRID.get(), CIRCUIT_FAILURE_THRESHOLD.get(), CIRCUIT_COOLDOWN_MILLIS.get());
     }
 
     public record PlannerPolicy(int workers, int queueCapacity, int timeoutMillis, long maxOperations,
                                 int maxDepth, int checkpointInterval, int snapshotTimeoutMillis,
                                 int snapshotMaxEdges, int snapshotMaxKeys, long snapshotMaxEstimatedBytes,
-                                int snapshotCacheEntries, int maxInFlightPerGrid,
-                                int circuitFailureThreshold, int circuitCooldownMillis) {
+                                int snapshotCacheEntries, long snapshotCacheBytes, int snapshotSliceMillis,
+                                int snapshotSliceEdges, int snapshotTickBudgetMillis, int maxPendingCaptures,
+                                int maxInFlightPerGrid, int circuitFailureThreshold, int circuitCooldownMillis) {
         public PlannerPolicy {
             if (workers < 1 || queueCapacity < 1 || timeoutMillis < 1 || maxOperations < 1
                     || maxDepth < 1 || checkpointInterval < 1 || snapshotTimeoutMillis < 1
                     || snapshotMaxEdges < 1 || snapshotMaxKeys < 1 || snapshotMaxEstimatedBytes < 1
-                    || snapshotCacheEntries < 1 || maxInFlightPerGrid < 1 || circuitFailureThreshold < 1
+                    || snapshotCacheEntries < 1 || snapshotCacheBytes < 1 || snapshotSliceMillis < 1
+                    || snapshotSliceEdges < 1 || snapshotTickBudgetMillis < 1 || maxPendingCaptures < 1
+                    || maxInFlightPerGrid < 1 || circuitFailureThreshold < 1
                     || circuitCooldownMillis < 1) {
                 throw new IllegalArgumentException("planner policy limits must be positive");
             }

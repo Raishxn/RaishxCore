@@ -110,8 +110,12 @@ public final class PlannerGameTests {
             };
         }
         IPatternDetails pattern(int input) {
+            return pattern(input, product);
+        }
+
+        IPatternDetails pattern(int input, AEItemKey output) {
             return PatternDetailsHelper.decodePattern(PatternDetailsHelper.encodeProcessingPattern(
-                    List.of(new GenericStack(raw, input)), List.of(new GenericStack(product, 1))), helper.getLevel());
+                    List.of(new GenericStack(raw, input)), List.of(new GenericStack(output, 1))), helper.getLevel());
         }
         void addPattern(IPatternDetails pattern) {
             provider.patterns.add(pattern);
@@ -119,6 +123,13 @@ public final class PlannerGameTests {
 
         void register() {
             grid.getCraftingService().addGlobalCraftingProvider(provider);
+        }
+
+        /** Replaces every pattern and tells the grid, which advances the pattern revision. */
+        void replacePatterns(IPatternDetails... replacements) {
+            provider.patterns.clear();
+            provider.patterns.addAll(List.of(replacements));
+            grid.getCraftingService().refreshGlobalCraftingProvider(provider);
         }
 
         Future<ICraftingPlan> request(long amount, CalculationStrategy strategy) {

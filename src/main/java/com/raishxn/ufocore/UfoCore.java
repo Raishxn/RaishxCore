@@ -7,6 +7,7 @@ import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 /** Entrypoint for the reusable UFO platform. Content belongs to consuming addons. */
 @Mod(UfoCore.MOD_ID)
@@ -18,6 +19,15 @@ public final class UfoCore {
         modContainer.registerConfig(ModConfig.Type.COMMON, CoreConfig.SPEC, "raishxcore/core.toml");
         NeoForge.EVENT_BUS.addListener(UfoCore::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(UfoCore::onServerStopping);
+        NeoForge.EVENT_BUS.addListener(UfoCore::onServerTick);
+    }
+
+    /**
+     * Feeds the cooperative graph captures. One shared budget is opened per tick and every grid with
+     * a capture in progress gets one bounded slice; work that does not fit waits for the next tick.
+     */
+    private static void onServerTick(ServerTickEvent.Post event) {
+        Ae2PlannerBridge.tick();
     }
 
     private static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {

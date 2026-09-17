@@ -19,9 +19,14 @@ import com.raishxn.ufocore.api.crafting.planner.PlanningRequest;
 import com.raishxn.ufocore.api.crafting.planner.PlanningResult;
 import java.math.BigInteger;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
@@ -29,107 +34,319 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.LongSupplier;
 import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
-/** Per-grid revision cache and bounded worker queue. No world/storage calls run on a worker. */
+/**
+ * Per-grid revision cache, cooperative capture queue and bounded worker queue.
+ *
+ * <p>Graph capture no longer runs to completion in one call. A request gets one slice of the graph
+ * inside the shared per-tick budget; if the slice ends with work left, AE2 receives a deferred future
+ * and {@link #tick()} keeps feeding that capture on later ticks. A capture that finishes inside the
+ * request's own slice behaves exactly like before, so the common case keeps its same-tick latency.
+ *
+ * <p>A request handed to a worker never touches the world: the snapshot, the inventory copy and the
+ * patterns are immutable, and native handles are only read on the server thread to rebuild the plan.
+ */
 public final class Ae2PlannerBridge {
     private static final Logger LOG = LogUtils.getLogger();
-    private static final java.util.Set<Ae2PlannerBridge> ACTIVE = ConcurrentHashMap.newKeySet();
+    private static final Set<Ae2PlannerBridge> ACTIVE = ConcurrentHashMap.newKeySet();
     private final ThreadPoolExecutor workers;
     private final InFlightRequestCoordinator<RequestKey, ICraftingPlan> requests;
     private final PlannerCircuitBreaker circuitBreaker = new PlannerCircuitBreaker();
-    private final Map<AEKey, Ae2PlanningSnapshot> snapshots = new LinkedHashMap<>(16, .75F, true);
+    private final CaptureSnapshotCache<AEKey, Ae2PlanningSnapshot> snapshots;
+    private final LinkedHashMap<AEKey, PendingCapture> captures = new LinkedHashMap<>();
     private volatile long revision = -1;
     private volatile long statusGeneration;
     private long hits;
     private long misses;
     private long backpressureRejections;
     private long circuitRejections;
+    private long deferredRequests;
+    private long captureCancellations;
+    private long captureSlices;
+    private int capturedPatterns;
+    private int rotation;
     private volatile PlanningResult.Diagnostics lastDiagnostics;
     private volatile String lastStatus = "idle";
 
     public Ae2PlannerBridge() {
         workers = WorkerPool.INSTANCE;
         requests = new InFlightRequestCoordinator<>(workers);
+        var policy = CoreConfig.plannerPolicy();
+        snapshots = new CaptureSnapshotCache<>(policy.snapshotCacheEntries(), policy.snapshotCacheBytes(),
+                Ae2PlanningSnapshot::estimatedBytes);
         ACTIVE.add(this);
     }
 
-    @Nullable public Future<ICraftingPlan> begin(Level level, IGrid grid,
-                                                  ICraftingSimulationRequester requester, AEKey target,
-                                                  long amount, CalculationStrategy strategy, long gridRevision) {
+    /**
+     * One crafting request as AE2 hands it over: the revision it was captured at, a way to notice that
+     * the revision moved while a capture is still running, and AE2's own planner as the fallback that
+     * is only allowed after the RaishxCore attempt was discarded in full.
+     */
+    public record BeginRequest(Level level, IGrid grid, ICraftingSimulationRequester requester, AEKey target,
+                               long amount, CalculationStrategy strategy, long revision,
+                               LongSupplier revisionCheck, @Nullable VanillaFallback fallback) {}
+
+    /** AE2's built-in planner, used for requests whose cooperative attempt no longer exists. */
+    @FunctionalInterface
+    public interface VanillaFallback {
+        @Nullable Future<ICraftingPlan> plan();
+    }
+
+    @Nullable
+    public Future<ICraftingPlan> begin(BeginRequest request) {
+        Objects.requireNonNull(request, "request");
+        Level level = request.level();
+        IGrid grid = request.grid();
+        ICraftingSimulationRequester requester = request.requester();
+        AEKey target = request.target();
+        long amount = request.amount();
         if (level == null || level.isClientSide || level.getServer() == null || !level.getServer().isSameThread()
                 || requester == null || requester.getActionSource() == null || amount <= 0) return null;
         var node = requester.getGridNode();
         if (node == null || node.getGrid() != grid) return null;
         CoreConfig.PlannerPolicy policy = CoreConfig.plannerPolicy();
-        Ae2PlanningSnapshot snapshot;
+        Object owner = requester.getActionSource().player()
+                .<Object>map(player -> player.getUUID())
+                .orElse(requester);
         try {
-            if (revision != gridRevision) {
-                revision = gridRevision;
+            if (revision != request.revision()) {
+                revision = request.revision();
                 statusGeneration++;
                 snapshots.clear();
                 requests.cancelAll();
                 circuitBreaker.reset();
+                cancelCaptures("grid revision changed");
             }
-            snapshot = snapshots.get(target);
-            if (snapshot == null) {
-                var captureLimits = new Ae2PlanningSnapshot.CaptureLimits(
-                        Duration.ofMillis(policy.snapshotTimeoutMillis()), policy.snapshotMaxEdges(),
-                        policy.snapshotMaxKeys(), policy.snapshotMaxEstimatedBytes());
-                snapshot = Ae2PlanningSnapshot.capture(
-                        level, grid.getCraftingService(), target, revision, captureLimits);
-                if (snapshots.size() >= policy.snapshotCacheEntries()) {
-                    snapshots.remove(snapshots.keySet().iterator().next());
+            snapshots.configure(policy.snapshotCacheEntries(), policy.snapshotCacheBytes());
+            Ae2PlanningSnapshot cached = snapshots.get(target);
+            if (cached != null) {
+                hits++;
+                var waiter = new Waiter(owner, statusGeneration, amount, request.strategy(), policy,
+                        inventoryOf(grid, requester), request.fallback());
+                settle(cached, waiter);
+                return finish(waiter);
+            }
+            PendingCapture pending = captures.get(target);
+            if (pending == null) {
+                if (captures.size() >= policy.maxPendingCaptures()) {
+                    backpressureRejections++;
+                    lastStatus = "ae2: too many pending captures";
+                    return null;
                 }
-                snapshots.put(target, snapshot);
+                var source = new Ae2CaptureSource(level, grid.getCraftingService());
+                pending = new PendingCapture(source, target, source.targetId(target), request.revision(),
+                        captureLimits(policy), request.revisionCheck());
+                captures.put(target, pending);
                 misses++;
-            } else hits++;
+            }
+            var waiter = new Waiter(owner, statusGeneration, amount, request.strategy(), policy,
+                    inventoryOf(grid, requester), request.fallback());
+            pending.waiters().add(waiter);
+            advance(target, pending);
+            if (waiter.outcome() == Outcome.PENDING) {
+                deferredRequests++;
+                lastStatus = "capture deferred";
+            }
+            return finish(waiter);
         } catch (Ae2PlanningSnapshot.Declined declined) {
             lastStatus = "ae2: " + declined.getMessage();
             return null;
         }
+    }
 
-        // AE2 also captures fresh inventory for player requests and cached inventory for machines.
-        KeyCounter inventory = requester.getActionSource().player().isPresent()
-                ? grid.getStorageService().getInventory().getAvailableStacks()
-                : grid.getStorageService().getCachedInventory();
-        Map<String, UfoAmount> stock = new HashMap<>();
-        for (var entry : inventory) {
-            String key = snapshot.keyIds().get(entry.getKey());
-            if (key != null && !key.equals(snapshot.target()) && entry.getLongValue() > 0) {
-                stock.put(key, UfoAmount.of(entry.getLongValue()));
+    /** Returns the value AE2 receives: a plan future, a deferred future, or {@code null} for fallback. */
+    @Nullable
+    private Future<ICraftingPlan> finish(Waiter waiter) {
+        waiter.markReturned();
+        return switch (waiter.outcome()) {
+            case PLANNING -> waiter.plan();
+            case REFUSED -> null;
+            case PENDING -> waiter.future();
+        };
+    }
+
+    /** One capture slice, from the shared budget, with cancellation checked at every transition. */
+    private void advance(AEKey target, PendingCapture pending) {
+        if (pending.revisionCheck().getAsLong() != pending.revision()) {
+            rejectCapture(target, pending, "grid revision changed during capture");
+            return;
+        }
+        long reservation = tickBudget().reserve(pending.limits().sliceNanos());
+        if (reservation <= 0L) return;
+        CooperativeGraphCapture.Status status;
+        try {
+            status = pending.machine().advance(new CooperativeGraphCapture.Slice(
+                    reservation, pending.limits().sliceEdges()));
+        } catch (Ae2PlanningSnapshot.Declined declined) {
+            settleSlice(pending, reservation);
+            rejectCapture(target, pending, declined.getMessage());
+            return;
+        } catch (RuntimeException unexpected) {
+            settleSlice(pending, reservation);
+            LOG.warn("RaishxCore graph capture failed unexpectedly.", unexpected);
+            rejectCapture(target, pending, "capture failed: " + unexpected);
+            return;
+        }
+        settleSlice(pending, reservation);
+        try {
+            switch (status) {
+                case COMPLETED -> publish(target, pending);
+                case CANCELLED -> cancelCapture(target, pending, "capture cancelled");
+                case YIELDED -> { }
+            }
+        } catch (RuntimeException unexpected) {
+            // A failure here must never escape into the server tick loop, and it must never leave a
+            // caller waiting on a capture that no longer exists.
+            LOG.warn("RaishxCore capture completion failed unexpectedly.", unexpected);
+            rejectCapture(target, pending, "capture failed: " + unexpected);
+        }
+    }
+
+    private void settleSlice(PendingCapture pending, long reservation) {
+        tickBudget().settle(reservation, pending.machine().lastSliceNanos());
+        captureSlices++;
+    }
+
+    /** Publishes a complete capture. A partial graph is never cached and never planned. */
+    private void publish(AEKey target, PendingCapture pending) {
+        // Built before anything is cleared, so a failure here leaves the waiters recoverable.
+        var snapshot = Ae2PlanningSnapshot.of(pending.machine().result(), pending.source().keys());
+        snapshots.put(target, snapshot);
+        captures.remove(target);
+        capturedPatterns = pending.machine().patternsCaptured();
+        List<Waiter> waiters = List.copyOf(pending.waiters());
+        pending.waiters().clear();
+        for (Waiter waiter : waiters) {
+            if (waiter.future().abandoned()) continue;
+            try {
+                settle(snapshot, waiter);
+            } catch (RuntimeException unexpected) {
+                LOG.warn("RaishxCore could not submit a plan for a captured graph.", unexpected);
+                waiter.refuse("plan submission failed: " + unexpected);
             }
         }
-        var captured = snapshot;
-        var capturedStock = Map.copyOf(stock);
-        long generation = statusGeneration;
-        Object owner = requester.getActionSource().player()
-                .<Object>map(player -> player.getUUID())
-                .orElse(requester);
-        var requestKey = new RequestKey(revision, snapshot.target(), amount, strategy, capturedStock, policy);
+    }
+
+    /**
+     * Discards a capture that hit a limit. Waiters that already hold a deferred future are served by
+     * AE2's own planner, because their request is still perfectly valid.
+     */
+    private void rejectCapture(AEKey target, PendingCapture pending, String reason) {
+        captures.remove(target);
+        lastStatus = "ae2: " + reason;
+        List<Waiter> waiters = List.copyOf(pending.waiters());
+        pending.waiters().clear();
+        for (Waiter waiter : waiters) waiter.refuse(reason);
+    }
+
+    /** Hard cancellation: the grid, the player or the server is gone, so no plan is worth starting. */
+    private void cancelCapture(AEKey target, PendingCapture pending, String reason) {
+        captures.remove(target);
+        pending.cancellation().cancel();
+        List<Waiter> waiters = List.copyOf(pending.waiters());
+        pending.waiters().clear();
+        for (Waiter waiter : waiters) {
+            if (!waiter.returned()) {
+                waiter.refuse(reason);
+                continue;
+            }
+            captureCancellations++;
+            waiter.future().abandon();
+        }
+        lastStatus = "ae2: " + reason;
+    }
+
+    /** Advances every pending capture for one tick, in rotating order so no grid starves another. */
+    void advanceCaptures() {
+        if (captures.isEmpty()) return;
+        List<Map.Entry<AEKey, PendingCapture>> order = new ArrayList<>(captures.entrySet());
+        int start = Math.floorMod(rotation++, order.size());
+        for (int index = 0; index < order.size(); index++) {
+            if (tickBudget().exhausted()) break;
+            var entry = order.get((start + index) % order.size());
+            PendingCapture pending = captures.get(entry.getKey());
+            if (pending == null) continue;
+            pending.waiters().removeIf(waiter -> waiter.future().abandoned());
+            if (pending.waiters().isEmpty()) {
+                cancelCapture(entry.getKey(), pending, "capture abandoned by its callers");
+                continue;
+            }
+            advance(entry.getKey(), pending);
+        }
+    }
+
+    /** Opens a new shared capture budget and feeds every pending capture once. Called every tick. */
+    public static void tick() {
+        tickBudget().beginTick();
+        for (Ae2PlannerBridge bridge : ACTIVE) bridge.advanceCaptures();
+    }
+
+    private static CaptureBudgetPool tickBudget() {
+        return TickBudget.INSTANCE;
+    }
+
+    private void settle(Ae2PlanningSnapshot snapshot, Waiter waiter) {
+        if (waiter.future().abandoned()) {
+            waiter.refuse("request abandoned before planning");
+            return;
+        }
+        Map<String, UfoAmount> stock = stockFor(snapshot, waiter.inventory());
+        var requestKey = new RequestKey(revision, snapshot.target(), waiter.amount(), waiter.strategy(), stock,
+                waiter.policy());
         if (!circuitBreaker.tryAcquire()) {
             circuitRejections++;
             lastStatus = "ae2: planner circuit open";
-            return null;
+            waiter.refuse("planner circuit open");
+            return;
         }
         try {
-            return requests.submit(requestKey, owner, PlanningTask.classified(
-                    () -> calculateGuarded(captured, capturedStock, amount, strategy, generation, policy),
-                    status -> recordStatus(generation, status),
-                    unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)),
-                    policy.maxInFlightPerGrid());
-        } catch (InFlightRequestCoordinator.PerGridLimitExceededException busyGrid) {
-            circuitBreaker.abortProbe(Duration.ofMillis(policy.circuitCooldownMillis()));
+            Future<ICraftingPlan> plan = requests.submit(requestKey, waiter.owner(),
+                    PlanningTask.classified(
+                            () -> calculateGuarded(snapshot, stock, waiter.amount(), waiter.strategy(),
+                                    waiter.generation(), waiter.policy()),
+                            status -> recordStatus(waiter.generation(), status),
+                            unexpected -> LOG.warn("RaishxCore planning failed unexpectedly.", unexpected)),
+                    waiter.policy().maxInFlightPerGrid());
+            waiter.deliver(plan);
+        } catch (InFlightRequestCoordinator.PerGridLimitExceededException busy) {
+            circuitBreaker.abortProbe(Duration.ofMillis(waiter.policy().circuitCooldownMillis()));
             backpressureRejections++;
             lastStatus = "ae2: per-grid planner limit";
-            return null;
+            waiter.refuse("per-grid planner limit");
         } catch (RejectedExecutionException busy) {
-            circuitBreaker.abortProbe(Duration.ofMillis(policy.circuitCooldownMillis()));
+            circuitBreaker.abortProbe(Duration.ofMillis(waiter.policy().circuitCooldownMillis()));
+            backpressureRejections++;
             lastStatus = "ae2: planner queue full";
-            return null;
+            waiter.refuse("planner queue full");
         }
+    }
+
+    private static Map<String, UfoAmount> stockFor(Ae2PlanningSnapshot snapshot, Map<AEKey, Long> inventory) {
+        Map<String, UfoAmount> stock = new HashMap<>();
+        inventory.forEach((key, amount) -> {
+            String id = snapshot.keyIds().get(key);
+            if (id != null && !id.equals(snapshot.target())) stock.put(id, UfoAmount.of(amount));
+        });
+        return Map.copyOf(stock);
+    }
+
+    /**
+     * Inventory exactly as the request saw it. AE2's own planner simulates from a snapshot taken when
+     * the calculation starts, so a capture that spans ticks must not drift to a later inventory.
+     */
+    private static Map<AEKey, Long> inventoryOf(IGrid grid, ICraftingSimulationRequester requester) {
+        KeyCounter inventory = requester.getActionSource().player().isPresent()
+                ? grid.getStorageService().getInventory().getAvailableStacks()
+                : grid.getStorageService().getCachedInventory();
+        Map<AEKey, Long> copy = new LinkedHashMap<>();
+        for (var entry : inventory) {
+            if (entry.getLongValue() > 0L) copy.put(entry.getKey(), entry.getLongValue());
+        }
+        return Map.copyOf(copy);
     }
 
     private ICraftingPlan calculateGuarded(Ae2PlanningSnapshot snapshot, Map<String, UfoAmount> stock,
@@ -239,8 +456,26 @@ public final class Ae2PlannerBridge {
         requests.cancelAll();
         snapshots.clear();
         circuitBreaker.reset();
+        cancelCaptures(status);
         lastStatus = status;
         lastDiagnostics = null;
+    }
+
+    /** Drops every pending capture and cancels the attempts that already reached a caller. */
+    private void cancelCaptures(String reason) {
+        if (captures.isEmpty()) return;
+        List<PendingCapture> pending = List.copyOf(captures.values());
+        captures.clear();
+        for (PendingCapture capture : pending) {
+            capture.cancellation().cancel();
+            for (Waiter waiter : capture.waiters()) {
+                if (!waiter.returned()) continue;
+                captureCancellations++;
+                waiter.future().abandon();
+            }
+            capture.waiters().clear();
+        }
+        lastStatus = reason;
     }
 
     public void close() {
@@ -248,8 +483,29 @@ public final class Ae2PlannerBridge {
         ACTIVE.remove(this);
     }
 
-    public static void cancelForPlayer(java.util.UUID playerId) {
-        for (Ae2PlannerBridge bridge : ACTIVE) bridge.requests.cancelOwner(playerId);
+    public static void cancelForPlayer(UUID playerId) {
+        for (Ae2PlannerBridge bridge : ACTIVE) {
+            bridge.requests.cancelOwner(playerId);
+            bridge.cancelCapturesOwnedBy(playerId);
+        }
+    }
+
+    private void cancelCapturesOwnedBy(Object owner) {
+        if (captures.isEmpty()) return;
+        List<AEKey> empty = new ArrayList<>();
+        for (var entry : captures.entrySet()) {
+            entry.getValue().waiters().removeIf(waiter -> {
+                if (!waiter.owner().equals(owner)) return false;
+                captureCancellations++;
+                waiter.future().abandon();
+                return true;
+            });
+            if (entry.getValue().waiters().isEmpty()) empty.add(entry.getKey());
+        }
+        for (AEKey target : empty) {
+            PendingCapture pending = captures.remove(target);
+            if (pending != null) pending.cancellation().cancel();
+        }
     }
 
     public static void cancelForServerStop() {
@@ -264,19 +520,140 @@ public final class Ae2PlannerBridge {
     public Diagnostics diagnostics() {
         var requestStats = requests.stats();
         var circuit = circuitBreaker.snapshot();
+        var budget = tickBudget();
         return new Diagnostics(revision, hits, misses, lastStatus, lastDiagnostics,
                 requestStats.inFlight(), requestStats.submitted(), requestStats.deduplicated(),
                 requestStats.cancelled(), workers.getActiveCount(), workers.getQueue().size(),
-                backpressureRejections, circuitRejections, circuit.state().name(), circuit.consecutiveFailures());
+                backpressureRejections, circuitRejections, circuit.state().name(), circuit.consecutiveFailures(),
+                captures.size(), deferredRequests, captureSlices, captureCancellations, capturedPatterns,
+                snapshots.size(), snapshots.bytes(), snapshots.evictions(), budget.remainingNanos());
     }
+
     public record Diagnostics(long revision, long cacheHits, long cacheMisses, String status,
                               @Nullable PlanningResult.Diagnostics lastPlan, int inFlightRequests,
                               long submittedRequests, long deduplicatedRequests, long cancelledRequests,
                               int activeWorkers, int queuedRequests, long backpressureRejections,
-                              long circuitRejections, String circuitState, int consecutiveFailures) {}
+                              long circuitRejections, String circuitState, int consecutiveFailures,
+                              int pendingCaptures, long deferredRequests, long captureSlices,
+                              long captureCancellations, int capturedPatterns, int cachedSnapshots,
+                              long cacheBytes, long cacheEvictions, long tickBudgetRemainingNanos) {}
 
     private record RequestKey(long revision, String target, long amount, CalculationStrategy strategy,
                               Map<String, UfoAmount> inventory, CoreConfig.PlannerPolicy policy) {}
+
+    /** What a caller of {@link #begin(BeginRequest)} is waiting for. */
+    private enum Outcome { PENDING, PLANNING, REFUSED }
+
+    /**
+     * One request attached to a capture, plus the inventory it saw and the fallback it may use. A
+     * waiter only becomes visible to a caller once {@code returned} is set, which is what decides
+     * whether a refusal can still be answered with {@code null} (AE2 plans it this tick) or has to be
+     * answered through the deferred future.
+     */
+    private final class Waiter {
+        private final Object owner;
+        private final long generation;
+        private final long amount;
+        private final CalculationStrategy strategy;
+        private final CoreConfig.PlannerPolicy policy;
+        private final Map<AEKey, Long> inventory;
+        @Nullable private final VanillaFallback fallback;
+        private final DeferredPlanFuture future = new DeferredPlanFuture();
+        @Nullable private Future<ICraftingPlan> plan;
+        private Outcome outcome = Outcome.PENDING;
+        private boolean returned;
+
+        Waiter(Object owner, long generation, long amount, CalculationStrategy strategy,
+               CoreConfig.PlannerPolicy policy, Map<AEKey, Long> inventory,
+               @Nullable VanillaFallback fallback) {
+            this.owner = owner;
+            this.generation = generation;
+            this.amount = amount;
+            this.strategy = strategy;
+            this.policy = policy;
+            this.inventory = inventory;
+            this.fallback = fallback;
+        }
+
+        Object owner() { return owner; }
+        long generation() { return generation; }
+        long amount() { return amount; }
+        CalculationStrategy strategy() { return strategy; }
+        CoreConfig.PlannerPolicy policy() { return policy; }
+        Map<AEKey, Long> inventory() { return inventory; }
+        DeferredPlanFuture future() { return future; }
+        Outcome outcome() { return outcome; }
+        boolean returned() { return returned; }
+        @Nullable Future<ICraftingPlan> plan() { return plan; }
+
+        void markReturned() { returned = true; }
+
+        void deliver(Future<ICraftingPlan> planning) {
+            plan = planning;
+            outcome = Outcome.PLANNING;
+            future.complete(planning);
+        }
+
+        /** No own plan for this attempt: answer with a fallback when the caller cannot take null. */
+        void refuse(String reason) {
+            outcome = Outcome.REFUSED;
+            if (!returned || future.abandoned()) return;
+            Future<ICraftingPlan> vanilla = null;
+            if (fallback != null) {
+                try {
+                    vanilla = fallback.plan();
+                } catch (RuntimeException failure) {
+                    LOG.warn("AE2 fallback planner failed after a discarded capture.", failure);
+                }
+            }
+            if (vanilla == null) {
+                lastStatus = "ae2: " + reason;
+                future.abandon();
+                return;
+            }
+            lastStatus = "ae2 fallback: " + reason;
+            future.complete(vanilla);
+        }
+    }
+
+    /** One capture in progress for one grid, shared by every waiter that asks for the same target. */
+    private final class PendingCapture {
+        private final Ae2CaptureSource source;
+        private final CooperativeGraphCapture<IPatternDetails> machine;
+        private final PlanningCancellation.Source cancellation = PlanningCancellation.source();
+        private final long revision;
+        private final Ae2PlanningSnapshot.CaptureLimits limits;
+        private final LongSupplier revisionCheck;
+        private final List<Waiter> waiters = new ArrayList<>();
+
+        PendingCapture(Ae2CaptureSource source, AEKey target, String targetId, long revision,
+                       Ae2PlanningSnapshot.CaptureLimits limits, LongSupplier revisionCheck) {
+            this.source = source;
+            this.revision = revision;
+            this.limits = limits;
+            this.revisionCheck = revisionCheck;
+            this.machine = new CooperativeGraphCapture<>(source, targetId, revision, limits, cancellation);
+        }
+
+        Ae2CaptureSource source() { return source; }
+        CooperativeGraphCapture<IPatternDetails> machine() { return machine; }
+        PlanningCancellation.Source cancellation() { return cancellation; }
+        long revision() { return revision; }
+        Ae2PlanningSnapshot.CaptureLimits limits() { return limits; }
+        LongSupplier revisionCheck() { return revisionCheck; }
+        List<Waiter> waiters() { return waiters; }
+    }
+
+    private static Ae2PlanningSnapshot.CaptureLimits captureLimits(CoreConfig.PlannerPolicy policy) {
+        return new Ae2PlanningSnapshot.CaptureLimits(Duration.ofMillis(policy.snapshotTimeoutMillis()),
+                policy.snapshotMaxEdges(), policy.snapshotMaxKeys(), policy.snapshotMaxEstimatedBytes(),
+                Duration.ofMillis(policy.snapshotSliceMillis()).toNanos(), policy.snapshotSliceEdges());
+    }
+
+    private static final class TickBudget {
+        private static final CaptureBudgetPool INSTANCE = new CaptureBudgetPool(
+                Duration.ofMillis(CoreConfig.plannerPolicy().snapshotTickBudgetMillis()));
+    }
 
     private static final class WorkerPool {
         private static final ThreadPoolExecutor INSTANCE = create();

@@ -30,7 +30,7 @@ class CoreConfigTest {
     @Test
     void unloadedConfigUsesDocumentedBoundedPlannerDefaults() {
         assertEquals(new CoreConfig.PlannerPolicy(2, 32, 2_000, 10_000_000L, 100_000, 128,
-                50, 100_000, 25_000, 64L * 1024 * 1024, 16,
+                50, 100_000, 25_000, 64L * 1024 * 1024, 16, 128L * 1024 * 1024, 2, 512, 4, 8,
                 4, 3, 10_000), CoreConfig.plannerPolicy());
     }
 
@@ -38,7 +38,11 @@ class CoreConfigTest {
     void plannerPolicyRejectsNonPositiveLimits() {
         assertThrows(IllegalArgumentException.class, () -> new CoreConfig.PlannerPolicy(
                 0, 32, 2_000, 10_000_000L, 100_000, 128,
-                50, 100_000, 25_000, 64L * 1024 * 1024, 16,
+                50, 100_000, 25_000, 64L * 1024 * 1024, 16, 128L * 1024 * 1024, 2, 512, 4, 8,
+                4, 3, 10_000));
+        assertThrows(IllegalArgumentException.class, () -> new CoreConfig.PlannerPolicy(
+                2, 32, 2_000, 10_000_000L, 100_000, 128,
+                50, 100_000, 25_000, 64L * 1024 * 1024, 16, 128L * 1024 * 1024, 2, 0, 4, 8,
                 4, 3, 10_000));
     }
 }
