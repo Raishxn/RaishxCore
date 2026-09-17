@@ -1090,3 +1090,47 @@ Uma capability só é considerada suportada quando possui:
 10. entrada na matriz diferencial e documentação de limites.
 
 Ter código que “funciona em um exemplo” não atende esta definição.
+
+## 17. Decisões tomadas em 2026-09-17
+
+Três itens estavam parados por dependerem de decisão e não de implementação. As decisões seguem, com a
+razão, para que possam ser contestadas com argumento em vez de redescobertas.
+
+### 17.1 QA humana do release: dispensada por ora
+
+O release do UFO deixa de esperar a sessão humana em mundo 2.x e modpack real. O que **não** é
+dispensado, porque é verificável por máquina e já está feito: o consumidor compila e roda contra a
+árvore local do Core por `includeBuild`, com 233 testes, 30/30 GameTests e `build` completo com
+datagen e árvore limpa. O que fica em aberto é a confiança sobre *conteúdo* de modpack, que nenhum
+teste cobre e que uma sessão humana cobriria. O risco aceito é esse, e é explicitamente aceito, não
+esquecido.
+
+### 17.2 Política de pesos: o valor é do consumidor, o Core só carrega o número
+
+O Core **não** vai derivar valor de material. Nada na AE2 diz quanto vale um item, e as duas
+alternativas disponíveis seriam o Core adivinhar sobre conteúdo: densidade de armazenamento
+(`amountPerByte`) mede bytes por unidade e não valor, e tier do UFO é conteúdo que o Core não deve
+conhecer — o próprio doc de classe do entrypoint diz que conteúdo pertence aos addons.
+
+A decisão é uma **ponto de registro**: o consumidor declara os pesos por chave serializada, e o
+operador tem um multiplicador default ou por entrada em `core.toml`, porque um pack pode discordar do
+addon sem recompilar nada. Sem provedor registrado, todo peso é um e o caminho é o de antes —
+byte a byte, como o gate de alocação já mede. O primeiro trabalho é a API e a ligação no bridge; não
+há valor a preencher até um consumidor declarar o que quer.
+
+### 17.3 Fase 4: sem solver em produção, com oráculo exato no corpus
+
+O solver inteiro não será construído. A avaliação da Fase 4 registra seis tentativas de construir um
+caso em que a ordenação atual perde para o ótimo global, todas fracassadas, e o corpus é ótimo nos 27
+casos de falta. Um solver em produção acrescentaria um backend, uma superfície de falha nova
+(timeout, solução parcial) e custo em grid grande, para melhorar casos que não conseguimos construir.
+
+O que **está** faltando, e é o que a fase realmente devia entregar, é a **prova**: hoje o ótimo do
+corpus é medido contra testemunhas declaradas à mão em `CapabilityCorpus`. A decisão é construir um
+**oráculo exato independente** para o corpus — enumeração limitada sobre componentes pequenos,
+minimizando faltante ponderado, usada só como oráculo e nunca como caminho de produção. Isso troca
+"ótimo contra o que nós mesmos declaramos" por "ótimo contra um mínimo calculado", que é a diferença
+entre um número e uma prova, e não carrega risco nenhum em produção.
+
+O gatilho para reconsiderar o solver em produção continua o mesmo e continua escrito: um caso no
+corpus que reporte faltante ponderado acima do mínimo e cujo ótimo exija escolha conjunta.
