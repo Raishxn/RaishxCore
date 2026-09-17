@@ -56,6 +56,9 @@ dependencies {
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+    // The metadata contract test compares the generated mods.toml against the version this
+    // build actually declares, so a version bump never needs a second edit in a test.
+    systemProperty 'raishxcore.modVersion', mod_version
 }
 
 // Opt-in benchmarks: never bundled into the mod or run by the normal test/build tasks.

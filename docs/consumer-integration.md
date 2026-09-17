@@ -19,8 +19,8 @@ includeBuild('../RaishxCore') {
 Add the version and dependency in the consumer:
 
 ```properties
-raishxcore_version=0.1.0-alpha.2
-raishxcore_version_range=[0.1.0-alpha.2,0.2)
+raishxcore_version=0.1.0-alpha.3
+raishxcore_version_range=[0.1.0-alpha.3,0.2)
 ```
 
 ```groovy
