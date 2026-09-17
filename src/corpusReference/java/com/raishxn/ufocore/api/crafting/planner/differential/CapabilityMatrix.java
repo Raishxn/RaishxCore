@@ -13,11 +13,14 @@ import java.util.TreeSet;
 
 /**
  * Runs the differential corpus through RaishxCore and the unmodified Thunderbolt V2 reference and
- * prints the capability matrix.
+ * prints two levels of answer.
  *
- * <p>The point is to replace "their classes exist, so they probably solve it" with a measured
- * answer per case. A case only counts as supported when the engine's own production path produced a
- * plan that the shared replay oracle accepted.
+ * <p><b>Claim level</b> is comparable across engines: it uses only the fields every planner reports
+ * and answers "does this engine claim to solve the case, and how good is the shortage it declares".
+ *
+ * <p><b>Replay level</b> is proof, and it stays with RaishxCore. The shared oracle re-executes an
+ * ordered schedule and compares a reported residue; a foreign plan need not carry either field, so
+ * a replay verdict for it would measure the adapter rather than the engine.
  */
 public final class CapabilityMatrix {
 
@@ -39,101 +42,108 @@ public final class CapabilityMatrix {
     }
 
     static String render(Report core, Report reference) {
+        Map<String, Entry> byA = index(core);
+        Map<String, Entry> byB = index(reference);
+        Map<String, CapabilityClaim> claimsA = claims(byA);
+        Map<String, CapabilityClaim> claimsB = claims(byB);
+
+        TreeSet<String> keys = new TreeSet<>(byA.keySet());
+        keys.addAll(byB.keySet());
+
         StringBuilder text = new StringBuilder();
         text.append("== differential capability matrix ==\n");
         text.append("A=").append(core.planner().name())
                 .append(" B=").append(reference.planner().name())
-                .append(" scenarios=").append(core.entries().size()).append('\n');
-        text.append("a case counts as supported only when the shared replay oracle accepted a plan\n\n");
+                .append(" scenarios=").append(keys.size()).append('\n');
+        text.append("claim = what the engine reports; it is comparable but it is not proof\n\n");
 
-        Map<String, Entry> byA = index(core);
-        Map<String, Entry> byB = index(reference);
-        TreeSet<String> keys = new TreeSet<>(byA.keySet());
-        keys.addAll(byB.keySet());
-
-        text.append(String.format(Locale.ROOT, "%-52s %-26s %-18s %-18s%n",
-                "case", "semantics", "A:" + shortName(core), "B:" + shortName(reference)));
+        text.append(String.format(Locale.ROOT, "%-50s %-24s %-17s %-17s%n",
+                "case", "semantics", "A:" + core.planner().name(), "B:" + reference.planner().name()));
         for (String key : keys) {
             Entry left = byA.get(key);
             Entry right = byB.get(key);
             CapabilityScenario scenario = left != null ? left.scenario() : right.scenario();
-            text.append(String.format(Locale.ROOT, "%-52s %-26s %-18s %-18s%n",
-                    key, semantics(scenario),
-                    left == null ? "-" : left.classification(),
-                    right == null ? "-" : right.classification()));
+            text.append(String.format(Locale.ROOT, "%-50s %-24s %-17s %-17s%n", key, semantics(scenario),
+                    claimName(claimsA.get(key)), claimName(claimsB.get(key))));
         }
 
-        text.append("\n== classification counts ==\n");
-        Map<CapabilityClassification, Long> countsA = core.counts();
-        Map<CapabilityClassification, Long> countsB = reference.counts();
-        text.append(String.format(Locale.ROOT, "%-24s %12s %12s%n", "classification",
-                core.planner().name(), reference.planner().name()));
-        for (CapabilityClassification classification : CapabilityClassification.values()) {
-            long a = countsA.getOrDefault(classification, 0L);
-            long b = countsB.getOrDefault(classification, 0L);
-            if (a == 0 && b == 0) continue;
-            text.append(String.format(Locale.ROOT, "%-24s %12d %12d%n", classification, a, b));
-        }
-
-        appendLimitationVerdict(text, core, reference, byA, byB);
+        appendCounts(text, core, reference, claimsA, claimsB);
+        appendReferenceVerdict(text, core, claimsA, claimsB);
         return text.toString();
     }
 
-    /**
-     * The question the matrix exists to answer: for every case RaishxCore refuses, did the reference
-     * engine actually solve it, refuse it too, or did this adapter simply fail to express it?
-     */
-    private static void appendLimitationVerdict(StringBuilder text, Report core, Report reference,
-                                                Map<String, Entry> byA, Map<String, Entry> byB) {
-        int solved = 0;
-        int refused = 0;
-        int gap = 0;
-        int other = 0;
+    private static void appendCounts(StringBuilder text, Report core, Report reference,
+                                     Map<String, CapabilityClaim> claimsA,
+                                     Map<String, CapabilityClaim> claimsB) {
+        text.append("\n== claim level (comparable across engines) ==\n");
+        text.append(String.format(Locale.ROOT, "%-20s %12s %12s%n", "verdict",
+                core.planner().name(), reference.planner().name()));
+        for (CapabilityClaim.Verdict verdict : CapabilityClaim.Verdict.values()) {
+            long a = claimsA.values().stream().filter(claim -> claim.verdict() == verdict).count();
+            long b = claimsB.values().stream().filter(claim -> claim.verdict() == verdict).count();
+            if (a == 0 && b == 0) continue;
+            text.append(String.format(Locale.ROOT, "%-20s %12d %12d%n", verdict, a, b));
+        }
+
+        text.append("\n== ").append(core.planner().name())
+                .append(" strict gate (replay-verified evidence) ==\n");
+        text.append(String.format(Locale.ROOT, "%-24s %12s%n", "classification", "count"));
+        for (Map.Entry<CapabilityClassification, Long> entry : core.counts().entrySet()) {
+            if (entry.getValue() == 0L) continue;
+            text.append(String.format(Locale.ROOT, "%-24s %12d%n", entry.getKey(), entry.getValue()));
+        }
+        text.append("\nReplay verdicts are reported for ").append(core.planner().name())
+                .append(" only: the oracle needs an ordered schedule and a residue, which a foreign\n")
+                .append("plan need not carry. Judging ").append(reference.planner().name())
+                .append(" by it would measure this adapter, not that engine.\n");
+    }
+
+    private static void appendReferenceVerdict(StringBuilder text, Report core,
+                                               Map<String, CapabilityClaim> claimsA,
+                                               Map<String, CapabilityClaim> claimsB) {
+        int complete = 0;
+        int shortage = 0;
+        int unsupported = 0;
+        int error = 0;
         StringBuilder rows = new StringBuilder();
         for (Entry left : core.entries()) {
-            if (!left.classification().safeDecline()) continue;
+            CapabilityClaim mine = claimsA.get(key(left));
+            if (mine == null || mine.verdict() != CapabilityClaim.Verdict.UNSUPPORTED) continue;
             String key = key(left);
-            Entry right = byB.get(key);
-            String verdict;
-            String detail = "";
-            if (right == null) {
-                verdict = "NOT-RUN";
-                other++;
-            } else if (right.classification().supported()) {
-                verdict = "REFERENCE SOLVES IT";
-                solved++;
-            } else if (right.classification().safeDecline()) {
-                boolean adapterGap = right.run().diagnostic().startsWith("adapter");
-                verdict = adapterGap ? "ADAPTER GAP" : "ALSO REFUSED";
-                detail = right.run().diagnostic();
-                if (adapterGap) {
-                    gap++;
-                } else {
-                    refused++;
+            CapabilityClaim theirs = claimsB.get(key);
+            String verdict = theirs == null ? "NOT-RUN" : theirs.verdict().name();
+            String detail = theirs == null ? "" : theirs.detail();
+            if (theirs != null) {
+                switch (theirs.verdict()) {
+                    case CLAIMS_COMPLETE -> complete++;
+                    case CLAIMS_SHORTAGE -> shortage++;
+                    case UNSUPPORTED -> unsupported++;
+                    case ERROR -> error++;
                 }
-            } else {
-                verdict = "REFERENCE DEFECT: " + right.classification();
-                detail = right.run().diagnostic();
-                other++;
             }
-            rows.append(String.format(Locale.ROOT, "%-52s %-30s %-20s %s%n",
+            rows.append(String.format(Locale.ROOT, "%-50s %-24s %-17s %s%n",
                     key, semantics(left.scenario()), verdict, detail));
         }
 
         text.append("\n== cases ").append(core.planner().name())
-                .append(" refuses: what the reference actually does ==\n");
-        text.append(rows);
-        text.append('\n');
-        text.append("solved by the reference : ").append(solved).append('\n');
-        text.append("also refused by it      : ").append(refused).append('\n');
-        text.append("adapter could not express: ").append(gap).append('\n');
-        text.append("other                   : ").append(other).append('\n');
-        text.append("\nA=adapter gap is a limitation of this adapter, not a verdict on the reference.\n");
-        text.append("Reference elapsed=")
-                .append(String.format(Locale.ROOT, "%.3fs", reference.elapsedNanos() / 1e9))
-                .append("  A elapsed=")
-                .append(String.format(Locale.ROOT, "%.3fs", core.elapsedNanos() / 1e9))
-                .append('\n');
+                .append(" does not support: what the reference claims ==\n");
+        text.append(rows).append('\n');
+        text.append("reference claims to solve it : ").append(complete).append('\n');
+        text.append("reference claims a shortage  : ").append(shortage).append('\n');
+        text.append("reference does not claim it  : ").append(unsupported).append('\n');
+        text.append("reference errored            : ").append(error).append('\n');
+        text.append("\nA claim is not a verdict: for the families above, confirm the reference with its\n")
+                .append("own replay or an independent oracle before treating any of these as solved.\n");
+    }
+
+    private static Map<String, CapabilityClaim> claims(Map<String, Entry> byKey) {
+        Map<String, CapabilityClaim> claims = new LinkedHashMap<>();
+        byKey.forEach((key, entry) -> claims.put(key, CapabilityClaim.of(entry.scenario(), entry.run())));
+        return claims;
+    }
+
+    private static String claimName(CapabilityClaim claim) {
+        return claim == null ? "-" : claim.verdict().name();
     }
 
     private static Map<String, Entry> index(Report report) {
@@ -155,10 +165,6 @@ public final class CapabilityMatrix {
             joined.append(value.name());
         }
         return joined.toString();
-    }
-
-    private static String shortName(Report report) {
-        return report.planner().name();
     }
 
     private CapabilityMatrix() {
