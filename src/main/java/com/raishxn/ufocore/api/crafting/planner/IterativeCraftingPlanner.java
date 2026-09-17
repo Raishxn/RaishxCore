@@ -44,6 +44,36 @@ public final class IterativeCraftingPlanner<K> {
     public IterativeCraftingPlanner() { this(System::nanoTime); }
     IterativeCraftingPlanner(LongSupplier nanoTime) { this.nanoTime = Objects.requireNonNull(nanoTime); }
 
+    /**
+     * How many comparison links can decide a route choice, in the order the comparator consults them:
+     * pattern priority, whether the route is short of an input, whether its leaf demand is known, its
+     * leaf demand, its reachability rank, its shortage deficit, its input cost, its execution count,
+     * its yield and finally its identifier. The histogram is exposed by diagnostics so an operator can
+     * say <em>why</em> a route won, which the chosen plan alone cannot.
+     */
+    public static final int CHOICE_LINK_COUNT = 10;
+
+    /**
+     * One comparison step without materialising the comparator twice: whether link {@code index}
+     * separates the winner from the runner-up. Only the two best candidates are compared, once, and
+     * only when a choice actually exists, which is what keeps the diagnostic off the common path.
+     */
+    private static <K> boolean decides(int index, K key, Candidate<K> left, Candidate<K> right) {
+        return switch (index) {
+            case 0 -> left.pattern.pattern().priority() != right.pattern.pattern().priority();
+            case 1 -> (left.deficit.signum() != 0) != (right.deficit.signum() != 0);
+            case 2 -> (left.leafCost == null) != (right.leafCost == null);
+            case 3 -> left.leafCost != null && right.leafCost != null
+                    && left.leafCost.compareTo(right.leafCost) != 0;
+            case 4 -> left.rank != right.rank;
+            case 5 -> left.deficit.compareTo(right.deficit) != 0;
+            case 6 -> left.cost.compareTo(right.cost) != 0;
+            case 7 -> left.runs.compareTo(right.runs) != 0;
+            case 8 -> left.pattern.outputAmount(key).compareTo(right.pattern.outputAmount(key)) != 0;
+            default -> !left.pattern.pattern().id().equals(right.pattern.pattern().id());
+        };
+    }
+
     public PlanningResult<K> plan(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request) {
         Objects.requireNonNull(graph, "graph");
         Objects.requireNonNull(request, "request");
@@ -64,6 +94,9 @@ public final class IterativeCraftingPlanner<K> {
                 if (!search(graph, request, state, ranks, leafCosts, budget, false)) {
                     // Shortage reporting starts from a fresh snapshot, never speculative leftovers.
                     state = new State(graph, request);
+                    // The discarded search's choices are not the returned plan's, so report the ones
+                    // the simulation actually made rather than counting every route twice.
+                    budget.choiceLinks = null;
                     search(graph, request, state, ranks, leafCosts, budget, true);
                 }
             }
@@ -79,7 +112,8 @@ public final class IterativeCraftingPlanner<K> {
                 ? PlanningResult.Status.COMPLETE : PlanningResult.Status.MISSING_INGREDIENTS;
         return new PlanningResult<>(status, plan, new PlanningResult.Diagnostics(graph.revision(),
                 budget.operations, budget.maximumDepth, Math.max(0, nanoTime.getAsLong() - started),
-                PlanningResult.ShortageSummary.of(plan.shortage()), budget.cycleCuts));
+                PlanningResult.ShortageSummary.of(plan.shortage()), budget.cycleCuts,
+                budget.choiceLinks));
     }
 
     private void planDag(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State state, Budget budget) {
@@ -584,6 +618,19 @@ public final class IterativeCraftingPlanner<K> {
                 .thenComparing(option -> option.pattern.outputAmount(key))
                 .thenComparing(option -> option.pattern.pattern().id());
         options.sort((left, right) -> { budget.operation(0); return order.compare(left, right); });
+        // Allocated only when a choice exists, so a graph with a single route per key never pays for
+        // the histogram. The winner is options.get(0); whatever separates it from options.get(1) is why.
+        if (options.size() > 1) {
+            if (budget.choiceLinks == null) {
+                budget.choiceLinks = new long[CHOICE_LINK_COUNT];
+            }
+            for (int index = 0; index < CHOICE_LINK_COUNT; index++) {
+                if (decides(index, key, options.get(0), options.get(1))) {
+                    budget.choiceLinks[index]++;
+                    break;
+                }
+            }
+        }
         return options;
     }
 
@@ -623,6 +670,11 @@ public final class IterativeCraftingPlanner<K> {
         int maximumDepth;
         /** Routes refused because they would have to reach into a key the plan is already expanding. */
         long cycleCuts;
+        /**
+         * One count per comparison link, or {@code null} when the plan never had a route to choose.
+         * Nothing allocates it on the common single-route path.
+         */
+        long[] choiceLinks;
         Budget(PlanningRequest<K> request, long started) {
             this.request = request; this.started = started;
             long nanos;

@@ -2,6 +2,7 @@ package com.raishxn.ufocore.neoforge.crafting;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.raishxn.ufocore.api.amount.UfoAmount;
@@ -68,10 +69,12 @@ class PlannerDiagnosticsReportTest {
         assertTrue(PlannerDiagnosticsReport.toJson(diagnostics(null, "idle")).contains("\"lastPlan\":null"));
 
         String reported = PlannerDiagnosticsReport.toJson(
-                diagnostics(new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, noShortage(), 2L),
+                diagnostics(new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, noShortage(), 2L, null),
                         "COMPLETE"));
         assertTrue(reported.contains("\"lastPlan\":{\"graphRevision\":7,\"operations\":1234,"
                 + "\"maximumDepth\":12,\"elapsedNanos\":987654,"), reported);
+        // A plan with nothing to choose reports no histogram rather than ten zeroes.
+        assertTrue(reported.contains("\"routeChoiceLinks\":null"), reported);
         assertFalse(reported.contains("\"lastPlan\":null"), reported);
     }
 
@@ -84,7 +87,8 @@ class PlannerDiagnosticsReportTest {
         var shortage = new PlanningResult.ShortageSummary(UfoAmount.of(5L), UfoAmount.ONE, UfoAmount.of(2L),
                 1, 1, 1);
         String json = PlannerDiagnosticsReport.toJson(diagnostics(
-                new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, shortage, 0L),
+                new PlanningResult.Diagnostics(7L, 1234L, 12, 987654L, shortage, 0L,
+                        new long[] {1L, 2L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 3L}),
                 "MISSING_INGREDIENTS"));
 
         assertTrue(json.contains("\"missingConsumable\":5"), json);
@@ -94,6 +98,14 @@ class PlannerDiagnosticsReportTest {
         assertTrue(json.contains("\"missingSeedKinds\":1"), json);
         assertTrue(json.contains("\"missingCarrierKinds\":1"), json);
         assertTrue(json.contains("\"cycleCuts\":0"), json);
+        // Why the routes were chosen: one count per comparison link, in the documented order.
+        assertTrue(json.contains("\"routeChoiceLinks\":[1,2,0,0,0,0,0,0,0,3]"), json);
+    }
+
+    /** A histogram that does not cover every link would render a payload a consumer cannot index. */
+    @Test void rejectsAChoiceHistogramThatDoesNotCoverEveryLink() {
+        assertThrows(IllegalArgumentException.class, () -> new PlanningResult.Diagnostics(
+                7L, 1L, 1, 1L, noShortage(), 0L, new long[] {1L, 2L}));
     }
 
     private static PlanningResult.ShortageSummary noShortage() {

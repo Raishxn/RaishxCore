@@ -91,8 +91,21 @@ public final class PlannerDiagnosticsReport {
                     .append(",\"missingCarrierKinds\":").append(shortage.carrierKinds())
                     // Routes refused because they would have to reach into a key the plan is already
                     // expanding. It explains a shortage that looks like it should have a route.
-                    .append(",\"cycleCuts\":").append(lastPlan.cycleCuts())
-                    .append('}');
+                    .append(",\"cycleCuts\":").append(lastPlan.cycleCuts());
+            // Why the routes were chosen: one count per comparison link, in the order documented on
+            // IterativeCraftingPlanner.CHOICE_LINK_COUNT, or null when the plan had nothing to choose.
+            long[] links = lastPlan.routeChoiceLinks();
+            if (links == null) {
+                json.append(",\"routeChoiceLinks\":null");
+            } else {
+                json.append(",\"routeChoiceLinks\":[");
+                for (int index = 0; index < links.length; index++) {
+                    if (index > 0) json.append(',');
+                    json.append(links[index]);
+                }
+                json.append(']');
+            }
+            json.append('}');
         }
         return json.append('}').toString();
     }
@@ -100,14 +113,15 @@ public final class PlannerDiagnosticsReport {
     /** The plan diagnostics as this renderer needs them, so the shape is pinned in one place. */
     private record PlanningResultDiagnostics(long graphRevision, long operations, int maximumDepth,
                                              long elapsedNanos, PlanningResult.ShortageSummary shortage,
-                                             long cycleCuts) {
+                                             long cycleCuts, long[] routeChoiceLinks) {
     }
 
     private static PlanningResultDiagnostics lastPlan(Ae2PlannerBridge.Diagnostics diagnostics) {
         var plan = diagnostics.lastPlan();
         return plan == null ? null
                 : new PlanningResultDiagnostics(plan.graphRevision(), plan.operations(),
-                        plan.maximumDepth(), plan.elapsedNanos(), plan.shortage(), plan.cycleCuts());
+                        plan.maximumDepth(), plan.elapsedNanos(), plan.shortage(), plan.cycleCuts(),
+                        plan.choiceLinks());
     }
 
     private static String escape(String value) {

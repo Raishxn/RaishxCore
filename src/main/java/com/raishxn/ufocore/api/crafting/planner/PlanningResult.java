@@ -55,7 +55,7 @@ public record PlanningResult<K>(Status status, CraftingPlan<K> plan, Diagnostics
     }
 
     public record Diagnostics(long graphRevision, long operations, int maximumDepth, long elapsedNanos,
-                              ShortageSummary shortage, long cycleCuts) {
+                              ShortageSummary shortage, long cycleCuts, long[] choiceLinks) {
         public Diagnostics {
             if (graphRevision < 0L || operations < 0L || maximumDepth < 0 || elapsedNanos < 0L
                     || cycleCuts < 0L) {
@@ -65,6 +65,26 @@ public record PlanningResult<K>(Status status, CraftingPlan<K> plan, Diagnostics
             if (cycleCuts < 0L) {
                 throw new IllegalArgumentException("cycle cuts must be non-negative");
             }
+            if (choiceLinks != null) {
+                if (choiceLinks.length != IterativeCraftingPlanner.CHOICE_LINK_COUNT) {
+                    throw new IllegalArgumentException("a route-choice histogram needs "
+                            + IterativeCraftingPlanner.CHOICE_LINK_COUNT + " links");
+                }
+                for (long count : choiceLinks) {
+                    if (count < 0L) throw new IllegalArgumentException("route-choice counts must be non-negative");
+                }
+                choiceLinks = choiceLinks.clone();
+            }
+        }
+
+        /**
+         * One count per comparison link, or {@code null} when the last plan had no route to choose.
+         * The order is documented on {@link IterativeCraftingPlanner#CHOICE_LINK_COUNT}; a defensive
+         * copy is returned so an operator reading diagnostics cannot mutate the recorded plan.
+         */
+        @Override
+        public long[] choiceLinks() {
+            return choiceLinks == null ? null : choiceLinks.clone();
         }
     }
 }

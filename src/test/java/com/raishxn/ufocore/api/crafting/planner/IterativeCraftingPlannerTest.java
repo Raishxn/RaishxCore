@@ -2,6 +2,8 @@ package com.raishxn.ufocore.api.crafting.planner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -404,6 +406,37 @@ class IterativeCraftingPlannerTest {
                 () -> "ten cheap units are worth less than one valuable one: "
                         + weighted.plan().missing());
         assertFalse(weighted.plan().missing().containsKey("gold"));
+    }
+
+    /**
+     * The plan says which route was taken; the diagnostics now say why. A graph with one route per key
+     * has nothing to explain and must not allocate a histogram, while a real choice records the single
+     * comparison link that separated the winner from the runner-up.
+     */
+    @Test void recordsTheComparisonLinkThatDecidedARouteWhenThereWasAChoice() {
+        var only = pattern("only", Map.of("raw", amount(1)), Map.of("done", amount(1)));
+        var forced = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(only)),
+                new PlanningRequest<>("done", amount(1), Map.of("raw", amount(1))));
+        assertNull(forced.diagnostics().choiceLinks(),
+                "a graph with no choice must not allocate a route-choice histogram");
+
+        var gold = pattern("a-gold", Map.of("gold", amount(1)), Map.of("widget", amount(1)));
+        var cheap = pattern("b-cheap", Map.of("cheap", amount(1)), Map.of("widget", amount(1)));
+        // Both materials are in stock, so the plan completes on the first search and is not re-run as
+        // a simulation. The two routes are otherwise identical and only the identifier breaks the tie.
+        var chosen = new IterativeCraftingPlanner<String>().plan(graph(1, List.of(gold, cheap)),
+                new PlanningRequest<>("widget", amount(1), Map.of("gold", amount(1), "cheap", amount(1))));
+
+        long[] links = chosen.diagnostics().choiceLinks();
+        assertNotNull(links, "a real route choice must record its deciding link");
+        assertEquals(IterativeCraftingPlanner.CHOICE_LINK_COUNT, links.length);
+        long total = 0L;
+        for (long count : links) {
+            total += count;
+        }
+        assertEquals(1L, total, () -> "one choice must be counted once: " + java.util.Arrays.toString(links));
+        assertEquals(1L, links[IterativeCraftingPlanner.CHOICE_LINK_COUNT - 1],
+                () -> "the identifier tie-break is what decided: " + java.util.Arrays.toString(links));
     }
 
     /**
