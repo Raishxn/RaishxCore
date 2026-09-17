@@ -135,18 +135,28 @@ final class InFlightRequestCoordinator<K, V> {
         }
 
         private void publish() {
+            // Retire the shared task before publishing the result. Completing the result releases
+            // every caller's view, so a caller that observes completion could otherwise read a
+            // request still counted as in flight - which is what a loaded runner kept catching.
             try {
-                result.complete(worker.get());
+                V value = worker.get();
+                retire();
+                result.complete(value);
             } catch (CancellationException stopped) {
+                retire();
                 result.cancel(false);
             } catch (ExecutionException failure) {
+                retire();
                 result.completeExceptionally(failure.getCause());
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
+                retire();
                 result.completeExceptionally(interrupted);
-            } finally {
-                if (tasks.remove(key, this)) inFlight.decrementAndGet();
             }
+        }
+
+        private void retire() {
+            if (tasks.remove(key, this)) inFlight.decrementAndGet();
         }
     }
 

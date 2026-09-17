@@ -51,6 +51,20 @@ class InFlightRequestCoordinatorTest {
     }
 
     @Test
+    void aCompletedRequestIsNoLongerCountedInFlightWhenTheCallerSeesIt() throws Exception {
+        // The bookkeeping used to land after the result was published, so a caller that had already
+        // seen its plan complete could still read the request as in flight. The window is a single
+        // instruction wide, so one iteration wins the race often enough to hide it; repeating the
+        // sequence is what makes the ordering failure show up rather than the timing.
+        for (int attempt = 0; attempt < 500; attempt++) {
+            var view = coordinator.submit("key" + attempt, () -> 7);
+            assertEquals(7, view.get(5, TimeUnit.SECONDS));
+            assertEquals(0, coordinator.stats().inFlight(),
+                    "attempt " + attempt + ": a request the caller saw complete is still in flight");
+        }
+    }
+
+    @Test
     void differentKeysRunIndependently() throws Exception {
         var calculations = new AtomicInteger();
         var first = coordinator.submit("first", calculations::incrementAndGet);
