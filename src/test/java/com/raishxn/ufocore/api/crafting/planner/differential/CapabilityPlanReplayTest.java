@@ -117,12 +117,23 @@ class CapabilityPlanReplayTest {
                 () -> "expected an unused-material finding, got " + report.findings());
     }
 
-    @Test void refusesToReplayNonExactSemantics() {
-        CapabilityGraph graph = new CapabilityGraph(List.of(CapabilityPattern.of("catalyst",
+    @Test void replaysCatalystsButRefusesSemanticsItCannotReExecute() {
+        CapabilityGraph catalyst = new CapabilityGraph(List.of(CapabilityPattern.of("catalyst",
                 List.of(CapabilityInput.reusable("seed", 1, "host")),
                 List.of(CapabilityOutput.primary("out", 1)))), Map.of());
+        CapabilityGraph fuzzy = new CapabilityGraph(List.of(CapabilityPattern.of("fuzzy",
+                List.of(CapabilityInput.fuzzy("logical", 1, "host", List.of("logical", "variant"))),
+                List.of(CapabilityOutput.primary("out", 1)))), Map.of());
+        CapabilityGraph probabilistic = new CapabilityGraph(List.of(CapabilityPattern.of("chance",
+                List.of(CapabilityInput.exact("ore", 1)),
+                List.of(CapabilityOutput.primary("out", 1),
+                        CapabilityOutput.probabilistic("extra", 1)))), Map.of());
 
-        assertFalse(CapabilityPlanReplay.isReplayable(graph));
+        // A catalyst is replayable: the oracle checks the seed is present and hands it back rather
+        // than drawing it, so a plan that uses one can be verified like any other.
+        assertTrue(CapabilityPlanReplay.isReplayable(catalyst));
+        assertFalse(CapabilityPlanReplay.isReplayable(fuzzy));
+        assertFalse(CapabilityPlanReplay.isReplayable(probabilistic));
     }
 
     private static CapabilityGraph chainGraph(Map<String, Long> stock) {

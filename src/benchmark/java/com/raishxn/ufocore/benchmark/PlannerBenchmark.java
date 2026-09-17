@@ -19,8 +19,13 @@ public final class PlannerBenchmark {
     private static final PlanningLimits LIMITS = new PlanningLimits(10_000_000, 100_000, Duration.ofSeconds(2), 128);
     /** Recorded baseline the gate compares against; regenerate with {@code update-baseline}. */
     private static final Path BASELINE = Path.of("src", "benchmark", "baseline", "planner-baseline.csv");
-    /** Wall time depends on the machine, so this only catches a catastrophic regression. */
-    private static final double TIME_TOLERANCE = 4.0;
+    /**
+     * Wall time depends on the machine and on what else the runner is doing, so this only catches a
+     * regression of an order of magnitude. A tighter factor failed under load while passing when run
+     * alone, which is a property of the machine rather than of the planner; allocation per operation
+     * is byte-exact and carries the tight half of the gate.
+     */
+    private static final double TIME_TOLERANCE = 10.0;
     /** Allocation per operation is byte-exact, so a fifth more already means something changed. */
     private static final double ALLOCATION_TOLERANCE = 1.20;
 

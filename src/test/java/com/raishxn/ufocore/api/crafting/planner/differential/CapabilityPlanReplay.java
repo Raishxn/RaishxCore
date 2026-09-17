@@ -4,9 +4,11 @@ import com.raishxn.ufocore.api.amount.UfoAmount;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Common replay oracle for the differential corpus.
@@ -80,8 +82,8 @@ public final class CapabilityPlanReplay {
                 failures.add("plan executes " + entry.getKey() + " zero times");
                 continue;
             }
-            if (!pattern.isExactDeterministic()) {
-                failures.add("plan executes " + entry.getKey() + " with non-exact semantics");
+            if (!isReplayable(pattern)) {
+                failures.add("plan executes " + entry.getKey() + " with semantics the oracle cannot replay");
             }
             declaredExecutions.merge(entry.getKey(), entry.getValue(), UfoAmount::add);
         }
@@ -108,6 +110,9 @@ public final class CapabilityPlanReplay {
                 continue;
             }
             for (CapabilityInput input : pattern.inputs()) {
+                // A catalyst is never consumed, so it is not demand: the seed stays in remaining, and
+                // that is what the balance below expects to find there.
+                if (input.kind() == CapabilityInput.Kind.REUSABLE) continue;
                 addInto(demand, input.key(), input.amount().multiply(entry.getValue().asBigInteger()));
             }
             for (CapabilityOutput output : pattern.outputs()) {
@@ -115,8 +120,31 @@ public final class CapabilityPlanReplay {
             }
         }
 
+        // A key that only ever serves as a catalyst has no flow to balance: the seed is not consumed,
+        // so supplying the reported shortage leaves it exactly where it was, and the declared balance
+        // would have to charge the plan for a unit it never used. Its requirement is verified by the
+        // presence check in the ordered replay instead, which is stricter than a balance.
+        Set<String> catalystsOnly = new LinkedHashSet<>();
+        Set<String> flowing = new LinkedHashSet<>();
+        for (CapabilityPattern pattern : graph.patterns()) {
+            for (CapabilityInput input : pattern.inputs()) {
+                if (input.kind() == CapabilityInput.Kind.REUSABLE) {
+                    catalystsOnly.add(input.key());
+                } else {
+                    flowing.add(input.key());
+                }
+            }
+            for (CapabilityOutput output : pattern.outputs()) {
+                flowing.add(output.key());
+            }
+        }
+        catalystsOnly.removeAll(flowing);
+
         // Balance of the declared numbers, independent of any execution order.
         for (String key : unionKeys(graph, plan, demand, produced)) {
+            if (catalystsOnly.contains(key)) {
+                continue;
+            }
             UfoAmount expected = stock(graph).getOrDefault(key, UfoAmount.ZERO)
                     .add(produced.getOrDefault(key, UfoAmount.ZERO))
                     .add(plan.missing().getOrDefault(key, UfoAmount.ZERO));
@@ -155,6 +183,19 @@ public final class CapabilityPlanReplay {
             }
             executedRuns = executedRuns.add(step.runs());
             for (CapabilityInput input : pattern.inputs()) {
+                if (input.kind() == CapabilityInput.Kind.REUSABLE) {
+                    // Presence once, drawn never: one seed serves every execution and must still be
+                    // in its pool after the step.
+                    UfoAmount present = crafted.get(input.key())
+                            .add(consumable.get(input.key()))
+                            .add(injected.get(input.key()));
+                    if (present.compareTo(input.amount()) < 0) {
+                        failures.add(supplyReportedMissing
+                                ? "reported shortage is insufficient for catalyst " + input.key()
+                                : "unfunded catalyst " + input.key() + " at " + pattern.id());
+                    }
+                    continue;
+                }
                 UfoAmount need = input.amount().multiply(step.runs().asBigInteger());
                 need = crafted.take(input.key(), need);
                 UfoAmount fromStock = consumable.take(input.key(), need);
@@ -228,7 +269,9 @@ public final class CapabilityPlanReplay {
                 }
             }
             for (String key : plan.missing().keySet()) {
-                if (!neededMissing.containsKey(key)) {
+                // A catalyst seed is the one shortage that is correctly reported and correctly never
+                // consumed, so it is not an unused-material finding.
+                if (!neededMissing.containsKey(key) && !catalystsOnly.contains(key)) {
                     findings.add("reported shortage includes unused material " + key);
                 }
             }
@@ -259,9 +302,21 @@ public final class CapabilityPlanReplay {
                 targetAvailable, executedRuns);
     }
 
-    /** True when every pattern the plan can execute has a replayable, exact-deterministic shape. */
+    /**
+     * True when every pattern the plan can execute has a shape this oracle can re-execute: exact and
+     * reusable inputs only, and no probabilistic output. A catalyst is replayable because the oracle
+     * checks that it is present and hands it back rather than drawing it.
+     */
     public static boolean isReplayable(CapabilityGraph graph) {
-        return graph.patterns().stream().allMatch(CapabilityPattern::isExactDeterministic);
+        return graph.patterns().stream().allMatch(CapabilityPlanReplay::isReplayable);
+    }
+
+    private static boolean isReplayable(CapabilityPattern pattern) {
+        return pattern.inputs().stream().allMatch(input ->
+                        input.kind() == CapabilityInput.Kind.EXACT
+                                || input.kind() == CapabilityInput.Kind.REUSABLE)
+                && pattern.outputs().stream().noneMatch(output ->
+                        output.kind() == CapabilityOutput.Kind.PROBABILISTIC);
     }
 
     private static UfoAmount request(CapabilityPlan plan, String key) {
@@ -271,7 +326,10 @@ public final class CapabilityPlanReplay {
     private static Map<String, UfoAmount> stock(CapabilityGraph graph) {
         LinkedHashMap<String, UfoAmount> consumable = new LinkedHashMap<>();
         graph.stock().forEach((key, entry) -> {
-            if (entry.kind() == CapabilityGraph.CapabilityStock.Kind.CONSUMABLE) {
+            // A host-owned reusable seed is inventory the plan may rely on. It is never drawn, which
+            // is what keeps the declared balance intact for a catalyst.
+            if (entry.kind() == CapabilityGraph.CapabilityStock.Kind.CONSUMABLE
+                    || entry.kind() == CapabilityGraph.CapabilityStock.Kind.REUSABLE) {
                 consumable.put(key, entry.amount());
             }
         });

@@ -25,16 +25,17 @@ public final class RaishxCoreSemanticModel {
     /**
      * The semantics this model claims. Always a subset of what the corpus may require.
      *
-     * <p>{@code REUSABLE_INPUT} is deliberately absent even though the planner and the lowering below
-     * can already carry it: the shared replay oracle still refuses a graph with a catalyst, so a plan
-     * for one could not be verified, and a capability the model cannot prove is not claimed. Adding
-     * the enum entry back is the whole activation once the oracle understands catalysts.
+     * <p>{@code REUSABLE_INPUT} is claimed now that the shared replay oracle can verify a plan that
+     * uses a catalyst: it checks the seed is present and hands it back rather than drawing it. Before
+     * that the model refused the semantics, because a capability that cannot be proved is not
+     * claimed.
      */
     private static final Set<CapabilitySemantics> SUPPORTED = Set.copyOf(EnumSet.of(
             CapabilitySemantics.DETERMINISTIC_EXACT_DAG,
             CapabilitySemantics.DETERMINISTIC_BYPRODUCT,
             CapabilitySemantics.BATCHING,
-            CapabilitySemantics.MULTI_ROUTE));
+            CapabilitySemantics.MULTI_ROUTE,
+            CapabilitySemantics.REUSABLE_INPUT));
 
     private RaishxCoreSemanticModel() {
     }

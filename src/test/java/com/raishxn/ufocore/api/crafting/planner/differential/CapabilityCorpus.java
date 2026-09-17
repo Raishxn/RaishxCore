@@ -348,18 +348,18 @@ public final class CapabilityCorpus {
         addScenario(out, "catalyst/returned-seed", CapabilityFamily.REUSABLE_CATALYST, 1_000,
                 CapabilityMaterialMode.MISSING, catalystGraph(patterns, host, Map.of(), consumables),
                 "E", UfoAmount.of(1_000), false, List.of(seed), semantics,
-                CapabilityExpectation.LIMITATION,
+                CapabilityExpectation.REQUIRED,
                 supplied -> catalystGraph(patterns, host, supplied, consumables));
         addScenario(out, "catalyst/returned-seed", CapabilityFamily.REUSABLE_CATALYST, 1_000,
                 CapabilityMaterialMode.MINIMUM, catalystGraph(patterns, host, seed, consumables),
                 "E", UfoAmount.of(1_000), true, List.of(), semantics,
-                CapabilityExpectation.LIMITATION,
+                CapabilityExpectation.REQUIRED,
                 supplied -> catalystGraph(patterns, host, merge(seed, supplied), consumables));
         addScenario(out, "catalyst/returned-seed", CapabilityFamily.REUSABLE_CATALYST, 1_000,
                 CapabilityMaterialMode.UNBOUNDED,
                 catalystGraph(patterns, host, Map.of("A", UNBOUNDED), Map.of("C", UNBOUNDED)),
                 "E", UfoAmount.of(1_000), true, List.of(), semantics,
-                CapabilityExpectation.LIMITATION,
+                CapabilityExpectation.REQUIRED,
                 supplied -> catalystGraph(patterns, host, merge(Map.of("A", UNBOUNDED), supplied),
                         Map.of("C", UNBOUNDED)));
     }
