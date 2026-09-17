@@ -807,12 +807,12 @@ existir, e está registrado como tal lá.
 
 ### Gate P — paridade
 
-Estado em 2026-09-17: o corpus passou de 27 para 66 casos em 22 grupos, todos nos três modos de
+Estado em 2026-09-17: o corpus passou de 27 para **81 casos em 27 grupos**, todos nos três modos de
 material, e a comparação com o Thunderbolt V2 deixou de ser uma promessa e virou um relatório
 (`plannerCapabilityMatrix`). Nenhuma afirmação de paridade é feita contra o AE2, que não é medido.
 
 - [x] Zero falso positivo, erro ou timeout não cooperativo: 0 falsos positivos, 0 falsos negativos,
-      0 erros de motor e 0 timeouts não cooperativos nos 66 casos, com a classificação publicada.
+      0 erros de motor e 0 timeouts não cooperativos nos 81 casos, com a classificação publicada.
 - [x] Replay e determinismo aprovados: todo caso é reproduzido pelo oráculo comum, inclusive pelo
       caminho de reabastecimento, e o harness roda cada caso também com a ordem de declaração
       invertida.
@@ -820,7 +820,7 @@ material, e a comparação com o Thunderbolt V2 deixou de ser uma promessa e vir
       banner de conclusão para que uma falha de carregamento não passe como sucesso.
 - [ ] 33/33 casos Thunderbolt `SUPPORTED` no RaishxCore: a suíte de referência não está importada e o
       corpus é próprio, então esta afirmação não pode ser feita. O que a matriz publica é o nível de
-      alegação por caso: 44 completos e 22 de falta, contra 37 e 26 com três sem resposta.
+      alegação por caso: 54 completos e 27 de falta, contra 39 e 39 com três sem resposta.
 
 ### Gate S — semântica superior
 
