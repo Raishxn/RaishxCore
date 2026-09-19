@@ -306,9 +306,6 @@ public final class CooperativeGraphCapture<P> {
         budget.pattern(recipe.id());
         verifySlots(recipe.inputs());
         verifySlots(recipe.outputs());
-        if (recipe.inputs().keySet().stream().anyMatch(recipe.outputs()::containsKey)) {
-            throw new Ae2PlanningSnapshot.Declined("feedback or catalyst pattern");
-        }
         Map<String, UfoAmount> inputs = new LinkedHashMap<>();
         recipe.inputs().forEach((inputId, slot) -> inputs.put(inputId, slot.amount()));
         Map<String, UfoAmount> outputs = new LinkedHashMap<>();

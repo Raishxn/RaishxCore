@@ -3,7 +3,6 @@ package com.raishxn.ufocore.neoforge.crafting;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.stacks.AEKey;
-import appeng.crafting.pattern.AECraftingPattern;
 import appeng.me.service.CraftingService;
 import com.raishxn.ufocore.api.amount.UfoAmount;
 import com.raishxn.ufocore.neoforge.crafting.CooperativeGraphCapture.KeyDetails;
@@ -25,9 +24,11 @@ import org.jetbrains.annotations.Nullable;
  * free of grid types and can be driven across ticks and unit tested with plain strings. Native
  * handles are only kept to rebuild the AE2 plan after the worker is done; no worker ever sees them.
  *
- * <p>Refusals are deliberately loud: a pattern with substitution, remainders, feedback, an unstable
- * definition or a non-exact input raises {@link Ae2PlanningSnapshot.Declined} instead of producing a
- * graph that would misrepresent the grid. The answers are cached per id, so a capture that resumes on
+ * <p>Refusals are deliberately loud: remainders, an unstable definition or an invalid input raises
+ * {@link Ae2PlanningSnapshot.Declined} instead of producing a graph that would misrepresent the grid.
+ * A substitution slot is pinned deterministically to the encoded first option; that option is still
+ * accepted by the native pattern, so the resulting plan is executable without multiplying every tag
+ * alternative into the graph. The answers are cached per id, so a capture that resumes on
  * a later tick never repeats a grid query, and patterns are validated one index at a time, so a key
  * with many patterns is captured across several slices instead of in one call.
  */
@@ -105,10 +106,6 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
 
     @Nullable
     private PatternDetails<IPatternDetails> capture(IPatternDetails pattern) {
-        if (pattern instanceof AECraftingPattern crafting
-                && (crafting.canSubstitute() || crafting.canSubstituteFluids())) {
-            throw new Ae2PlanningSnapshot.Declined("substitution pattern");
-        }
         var definition = pattern.getDefinition();
         if (definition == null) throw new Ae2PlanningSnapshot.Declined("pattern without stable definition");
         String patternId = Ae2PlanningSnapshot.canonical(definition.toTagGeneric(level.registryAccess()));
@@ -116,10 +113,10 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
         Map<String, Slot> inputs = new LinkedHashMap<>();
         for (var input : pattern.getInputs()) {
             var options = input.getPossibleInputs();
-            if (options.length != 1 || options[0].amount() <= 0 || input.getMultiplier() <= 0
+            if (options.length == 0 || options[0].amount() <= 0 || input.getMultiplier() <= 0
                     || input.getRemainingKey(options[0].what()) != null
                     || !input.isValid(options[0].what(), level)) {
-                throw new Ae2PlanningSnapshot.Declined("non-exact or remainder input");
+                throw new Ae2PlanningSnapshot.Declined("invalid or remainder input");
             }
             AEKey inputKey = options[0].what();
             String inputId = id(inputKey);

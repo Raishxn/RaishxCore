@@ -18,15 +18,14 @@ import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 /**
- * Degradation path of the AE2 planner integration: when the Core declines a graph
- * it cannot represent, AE2's own planner must still serve the request and the
- * diagnostics must say so instead of leaving a silent gap.
+ * Boundaries of the AE2 planner integration: common substitution patterns stay inside the Core,
+ * while separate cooperative-capture tests exercise the deliberate fallback paths.
  */
 @GameTestHolder("raishxcore_tests")
 @PrefixGameTestTemplate(false)
 public final class PlannerDegradationGameTests {
     @GameTest(template = "empty", timeoutTicks = 240)
-    public static void declinedGraphFallsBackToVanillaAe2Planner(GameTestHelper helper) {
+    public static void substitutionAlternativesStayInsideCorePlanner(GameTestHelper helper) {
         try {
             runDeclineScenario(helper);
         } catch (Throwable t) {
@@ -37,23 +36,22 @@ public final class PlannerDegradationGameTests {
 
     private static void runDeclineScenario(GameTestHelper helper) {
         var fixture = new PlannerGameTests.Fixture(helper);
-        // Crafting patterns with substitution are outside the Core graph contract (it
-        // only accepts graphs of exact inputs); AE2's built-in planner handles them natively.
+        // The crafting-table ingredient is tag-backed and exposes several possible planks. The Core
+        // pins the slot to the encoded oak option, which remains valid for native AE2 execution.
         var recipe = helper.getLevel().getServer().getRecipeManager()
-                .byKey(ResourceLocation.withDefaultNamespace("stone_bricks"))
-                .orElseThrow(() -> new IllegalStateException("vanilla stone_bricks recipe missing"));
+                .byKey(ResourceLocation.withDefaultNamespace("crafting_table"))
+                .orElseThrow(() -> new IllegalStateException("vanilla crafting table recipe missing"));
         if (!(recipe.value() instanceof CraftingRecipe crafting)) {
-            throw new IllegalStateException("stone_bricks is not a crafting recipe");
+            throw new IllegalStateException("crafting table is not a crafting recipe");
         }
-        RecipeHolder<CraftingRecipe> stoneBricks = new RecipeHolder<>(recipe.id(), crafting);
-        var stone = new ItemStack(Items.STONE);
+        RecipeHolder<CraftingRecipe> craftingTable = new RecipeHolder<>(recipe.id(), crafting);
+        var plank = new ItemStack(Items.OAK_PLANKS);
         var empty = ItemStack.EMPTY;
         IPatternDetails substituted = PatternDetailsHelper.decodePattern(
                 PatternDetailsHelper.encodeCraftingPattern(
-                        stoneBricks,
-                        // vanilla stone bricks layout: a 2x2 block inside the 3x3 grid
-                        new ItemStack[]{stone, stone, empty, stone, stone, empty, empty, empty, empty},
-                        new ItemStack(Items.STONE_BRICKS),
+                        craftingTable,
+                        new ItemStack[]{plank, plank, empty, plank, plank, empty, empty, empty, empty},
+                        new ItemStack(Items.CRAFTING_TABLE),
                         true, false),
                 helper.getLevel());
         if (substituted == null) {
@@ -62,14 +60,40 @@ public final class PlannerDegradationGameTests {
         }
         fixture.addPattern(substituted);
         fixture.register();
-        var future = fixture.request(AEItemKey.of(Items.STONE_BRICKS), 8, CalculationStrategy.REPORT_MISSING_ITEMS);
+        var future = fixture.request(AEItemKey.of(Items.CRAFTING_TABLE), 8,
+                CalculationStrategy.REPORT_MISSING_ITEMS);
         await(helper, future, plan -> {
-            helper.assertTrue(plan != null, "AE2's vanilla planner should still produce a plan");
-            var status = fixture.diagnostics().status();
-            helper.assertTrue(status.startsWith("ae2: "),
-                    "diagnostics should record the decline, got: " + status);
-            helper.assertTrue(status.contains("substitution"),
-                    "decline reason should name the substitution pattern, got: " + status);
+            helper.assertTrue(plan != null, "Core should produce a plan for substitution alternatives");
+            helper.assertTrue(fixture.diagnostics().lastPlan() != null,
+                    "tag-backed substitution was delegated to AE2");
+            fixture.close();
+            helper.succeed();
+        });
+    }
+
+    @GameTest(template = "empty", timeoutTicks = 240)
+    public static void exactSubstitutionPatternStaysInsideCorePlanner(GameTestHelper helper) {
+        var fixture = new PlannerGameTests.Fixture(helper);
+        var recipe = helper.getLevel().getServer().getRecipeManager()
+                .byKey(ResourceLocation.withDefaultNamespace("stone_bricks"))
+                .orElseThrow(() -> new IllegalStateException("vanilla stone bricks recipe missing"));
+        if (!(recipe.value() instanceof CraftingRecipe crafting)) {
+            throw new IllegalStateException("stone bricks is not a crafting recipe");
+        }
+        var stone = new ItemStack(Items.STONE);
+        var empty = ItemStack.EMPTY;
+        IPatternDetails exact = PatternDetailsHelper.decodePattern(PatternDetailsHelper.encodeCraftingPattern(
+                new RecipeHolder<>(recipe.id(), crafting),
+                new ItemStack[]{stone, stone, empty, stone, stone, empty, empty, empty, empty},
+                new ItemStack(Items.STONE_BRICKS), true, false), helper.getLevel());
+        helper.assertTrue(exact != null, "exact substitution pattern failed to decode");
+        fixture.addPattern(exact);
+        fixture.register();
+        await(helper, fixture.request(AEItemKey.of(Items.STONE_BRICKS), 8,
+                CalculationStrategy.REPORT_MISSING_ITEMS), plan -> {
+            helper.assertTrue(plan != null, "Core should produce a plan for exact substitution");
+            helper.assertTrue(fixture.diagnostics().lastPlan() != null,
+                    "exact substitution was delegated to AE2");
             fixture.close();
             helper.succeed();
         });

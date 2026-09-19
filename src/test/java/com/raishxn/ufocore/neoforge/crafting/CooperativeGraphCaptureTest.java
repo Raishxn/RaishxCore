@@ -243,14 +243,18 @@ class CooperativeGraphCaptureTest {
     }
 
     @Test
-    void feedbackPatternsAreRefusedEvenWhenTheAdapterReportsThem() {
+    void feedbackPatternsReachThePlannerInsteadOfForcingAe2Fallback() {
         var grid = chain();
         grid.selfFeeding("plate", "frame");
         var capture = capture(grid, PlanningCancellation.NEVER);
 
-        var declined = assertThrows(Ae2PlanningSnapshot.Declined.class, () -> capture.advance(UNBOUNDED));
+        assertEquals(Status.COMPLETED, capture.advance(UNBOUNDED));
 
-        assertEquals("feedback or catalyst pattern", declined.getMessage());
+        var feedback = capture.result().graph().patterns().stream()
+                .filter(pattern -> pattern.id().equals("pattern-feedback"))
+                .findFirst().orElseThrow();
+        assertEquals(UfoAmount.ONE, feedback.inputs().get("plate"));
+        assertEquals(UfoAmount.ONE, feedback.outputs().get("plate"));
     }
 
     @Test

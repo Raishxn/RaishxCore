@@ -79,6 +79,26 @@ public final class PlannerGameTests {
         });
     }
 
+    @GameTest(template = "empty", timeoutTicks = 240)
+    public static void standardMenuRequesterWithoutGridNodeUsesCorePlanner(GameTestHelper helper) {
+        var fixture = new Fixture(helper);
+        fixture.provider.patterns.add(fixture.pattern(1));
+        fixture.grid.getCraftingService().addGlobalCraftingProvider(fixture.provider);
+        // CraftConfirmMenu creates this same shape of requester: it implements getActionSource(),
+        // while ICraftingSimulationRequester's default getGridNode() returns null.
+        ICraftingSimulationRequester menuRequester = () -> IActionSource.empty();
+        var request = fixture.grid.getCraftingService().beginCraftingCalculation(
+                helper.getLevel(), menuRequester, fixture.product, 8, CalculationStrategy.REPORT_MISSING_ITEMS);
+        await(helper, request, plan -> {
+            helper.assertTrue(!plan.simulation(), "menu request should produce an executable plan");
+            helper.assertTrue(plan.usedItems().get(fixture.raw) == 8, "incorrect raw extraction");
+            helper.assertTrue(fixture.diagnostics().lastPlan() != null,
+                    "requester without a grid node bypassed the Core planner");
+            fixture.close();
+            helper.succeed();
+        });
+    }
+
     private static void await(GameTestHelper helper, Future<ICraftingPlan> future, Consumer<ICraftingPlan> action) {
         helper.runAfterDelay(1, () -> {
             if (!future.isDone()) { await(helper, future, action); return; }

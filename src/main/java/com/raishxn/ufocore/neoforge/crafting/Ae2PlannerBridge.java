@@ -120,7 +120,10 @@ public final class Ae2PlannerBridge {
         if (level == null || level.isClientSide || level.getServer() == null || !level.getServer().isSameThread()
                 || requester == null || requester.getActionSource() == null || amount <= 0) return null;
         var node = requester.getGridNode();
-        if (node == null || node.getGrid() != grid) return null;
+        // CraftConfirmMenu's requester only supplies an action source. Its default getGridNode()
+        // therefore returns null even though this bridge belongs to the authoritative grid's
+        // CraftingService. A non-null node remains useful for rejecting a genuinely foreign grid.
+        if (node != null && node.getGrid() != grid) return null;
         CoreConfig.PlannerPolicy policy = CoreConfig.plannerPolicy();
         Object owner = requester.getActionSource().player()
                 .<Object>map(player -> player.getUUID())
@@ -167,6 +170,8 @@ public final class Ae2PlannerBridge {
             return finish(waiter);
         } catch (Ae2PlanningSnapshot.Declined declined) {
             lastStatus = "ae2: " + declined.getMessage();
+            LOG.debug("RaishxCore delegated {} to AE2 during the initial capture: {}", target,
+                    declined.getMessage());
             return null;
         }
     }
@@ -255,6 +260,7 @@ public final class Ae2PlannerBridge {
     private void rejectCapture(AEKey target, PendingCapture pending, String reason) {
         captures.remove(target);
         lastStatus = "ae2: " + reason;
+        LOG.debug("RaishxCore delegated {} to AE2 after a deferred capture: {}", target, reason);
         List<Waiter> waiters = List.copyOf(pending.waiters());
         pending.waiters().clear();
         for (Waiter waiter : waiters) waiter.refuse(reason);
