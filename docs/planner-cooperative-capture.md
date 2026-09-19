@@ -44,18 +44,17 @@ is still built only at the end.
 Three limits apply at the same time:
 
 1. **Total capture limits** (`snapshot.timeoutMillis`, `maxEdges`, `maxKeys`,
-   `maxEstimatedBytes`) bound the whole capture, across ticks. Exceeding one declines the
-   capture.
+   `maxEstimatedBytes`) bound the whole capture. The timeout accumulates only main-thread time
+   spent inside its slices; idle time between server ticks is excluded. Exceeding one declines
+   the capture.
 2. **Slice limits per grid** (`snapshot.sliceMillis`, `snapshot.sliceEdges`) bound one
    slice. The edge allowance makes a slice reproducible in tests; the time allowance is a
    safety net.
 3. **Shared tick budget** (`snapshot.tickBudgetMillis`) bounds what all grids together may
-   spend on capture in one tick. Rotation is applied **inside one grid**, across that grid's own
-   pending captures; across grids, `Ae2PlannerBridge.tick()` walks the active bridges in set
-   order and stops once the shared budget is exhausted, so a grid not reached in one tick waits
-   for the next. Because a capture is finite and the budget resets every tick, every grid is
-   eventually served - but that is a completion guarantee, not a per-tick wait bound. The
-   bounded-wait fairness proof belongs to the harness pump, which does rotate across grids.
+   spend on capture in one tick. Rotation is applied inside each grid's pending captures and
+   across the active grids. `Ae2PlannerBridge.tick()` advances the first grid each tick, so even
+   when one slice consumes the whole shared budget, every active grid becomes first within one
+   complete rotation.
 
 Guarantees:
 
@@ -163,8 +162,8 @@ call, which is a slice's atomic tail. Observed: 15 slices over 8 ticks for the t
 slow calls, every request planned exactly by the Core, no capture left pending, no backpressure
 rejection and no circuit rejection on any grid. The overrun is charged to the shared budget in full
 and the other grids simply wait for the next tick. What carries the test is that each capture is
-finite and the budget resets every tick - the deployed bridge does not rotate across grids, so this
-is a no-starvation result, not a per-tick fairness result.
+finite, the budget resets every tick and the deployed bridge rotates which grid is served first.
+This gives bounded scheduling wait even when the slow grid consumes a whole tick's allowance.
 
 ## Fallback policy
 
@@ -226,10 +225,10 @@ allowance that was never sliced, a p95 above the target, an incomplete capture, 
 starved multi-grid run.
 
 `plannerCaptureSlices` (`CaptureSliceHarness`) drives the production capture machine through a
-harness-owned pump - rotating grid order, one shared budget per simulated tick. That pump is not
-`Ae2PlannerBridge.tick()`, which does not rotate across grids - and
-reports the table above. It gates on the deterministic invariants plus a p95 ceiling for the
-costed cases, and it compares every sliced capture with an unbounded capture of the same grid.
+harness-owned pump with the same scheduling rule as `Ae2PlannerBridge.tick()`: rotating grid order
+and one shared budget per simulated tick. It reports the table above, gates on the deterministic
+invariants plus a p95 ceiling for the costed cases, and compares every sliced capture with an
+unbounded capture of the same grid.
 
 GameTests (`src/gameTest/java/com/raishxn/ufocore/gametest/PlannerCooperativeCaptureGameTests.java`,
 one batch per scenario so grid and config state cannot race):
@@ -271,19 +270,18 @@ one batch per scenario so grid and config state cannot race):
 - **A blocking adapter call is contained, not preempted.** A provider that blocks inside a slice
   holds the server thread for that call; the capture charges the overrun to the shared budget,
   but it cannot shorten the call itself.
-- **The production pump does not rotate across grids.** `Ae2PlannerBridge.tick()` iterates the
-  active bridges in unordered set order and breaks once the shared budget is exhausted, so a grid
-  reached late in that order can wait several ticks. `CaptureBudgetPool` still bounds the total
-  per-tick cost, and every grid finishes because captures are finite, but the bounded-wait
-  fairness property the harness gates is not proven for the deployed scheduler.
+- **Cross-grid rotation bounds scheduling wait, not provider runtime.** Every active grid becomes
+  first within one rotation, but an adapter call already in progress is still cooperative rather
+  than preemptive and may overrun its slice before the next grid can run.
 - **Slice percentiles are server-wide, not per grid.** `CaptureMetrics` is one static instance, so
   the slice histogram aggregates every grid. Per-grid percentiles would need a meter per bridge.
 - **The corpus does not cover capture behaviour.** `plannerDifferential` still measures the
   planner, not the capture; the capture guarantees live in unit tests and GameTests.
 - **The deferred path is not benchmarked.** `plannerBenchmark` exercises the planner API
   directly and does not go through the bridge.
-- **`snapshot.timeoutMillis` still applies across ticks.** A capture that keeps yielding for
-  longer than that deadline is declined and handed to AE2.
+- **`snapshot.timeoutMillis` accumulates active capture work across ticks.** A capture that uses
+  more active main-thread time than the deadline is declined and handed to AE2; waiting between
+  ticks does not consume that allowance.
 
 ## Next steps
 

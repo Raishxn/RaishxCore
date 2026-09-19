@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -155,6 +156,52 @@ class CooperativeGraphCaptureTest {
             if (capture.advance(new Slice(1L, 1)) == Status.COMPLETED) return;
         }
         throw new AssertionError("a one-nanosecond slice never finished the capture");
+    }
+
+    @Test
+    void idleTimeBetweenSlicesDoesNotConsumeTheCaptureTimeout() {
+        var clock = new AtomicLong();
+        var limits = new Ae2PlanningSnapshot.CaptureLimits(
+                Duration.ofNanos(10), 10_000, 1_000, 8L * 1024 * 1024);
+        var capture = new CooperativeGraphCapture<String>(
+                chain(), TARGET, 7L, limits, PlanningCancellation.NEVER, clock::get);
+
+        assertEquals(Status.YIELDED, capture.advance(ONE_EDGE));
+        clock.addAndGet(Duration.ofSeconds(1).toNanos());
+
+        for (int attempt = 0; attempt < 50; attempt++) {
+            if (capture.advance(ONE_EDGE) == Status.COMPLETED) return;
+        }
+        throw new AssertionError("idle time between ticks consumed the active capture timeout");
+    }
+
+    @Test
+    void activeTimeInsideSlicesStillConsumesTheCaptureTimeout() {
+        var clock = new AtomicLong();
+        FakeGrid grid = chain();
+        CooperativeGraphCapture.Source<String> slow = new CooperativeGraphCapture.Source<>() {
+            @Override public KeyDetails describe(String id) {
+                clock.addAndGet(11L);
+                return grid.describe(id);
+            }
+
+            @Override public int patternCount(String id) { return grid.patternCount(id); }
+
+            @Override public PatternDetails<String> patternAt(String id, int index) {
+                return grid.patternAt(id, index);
+            }
+        };
+        var limits = new Ae2PlanningSnapshot.CaptureLimits(
+                Duration.ofNanos(10), 10_000, 1_000, 8L * 1024 * 1024);
+        var capture = new CooperativeGraphCapture<>(
+                slow, TARGET, 7L, limits, PlanningCancellation.NEVER, clock::get);
+
+        var declined = assertThrows(Ae2PlanningSnapshot.Declined.class,
+                () -> capture.advance(UNBOUNDED));
+
+        assertEquals("snapshot time limit", declined.getMessage());
+        assertTrue(capture.cancelled(), "a timed-out capture must discard all partial state");
+        assertThrows(IllegalStateException.class, capture::result);
     }
 
     @Test

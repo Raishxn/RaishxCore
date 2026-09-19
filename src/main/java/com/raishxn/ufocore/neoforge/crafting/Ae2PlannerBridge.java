@@ -21,6 +21,7 @@ import com.raishxn.ufocore.api.crafting.planner.PlanningResult;
 import java.math.BigInteger;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,6 +36,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.Nullable;
@@ -58,6 +60,9 @@ import org.slf4j.Logger;
 public final class Ae2PlannerBridge {
     private static final Logger LOG = LogUtils.getLogger();
     private static final Set<Ae2PlannerBridge> ACTIVE = ConcurrentHashMap.newKeySet();
+    private static final AtomicLong NEXT_BRIDGE_ID = new AtomicLong();
+    private static long bridgeRotation;
+    private final long bridgeId = NEXT_BRIDGE_ID.getAndIncrement();
     private final ThreadPoolExecutor workers;
     private final InFlightRequestCoordinator<RequestKey, ICraftingPlan> requests;
     private final PlannerCircuitBreaker circuitBreaker = new PlannerCircuitBreaker();
@@ -297,11 +302,19 @@ public final class Ae2PlannerBridge {
         return slices;
     }
 
-    /** Opens a new shared capture budget and feeds every pending capture once. Called every tick. */
+    /** Opens the shared budget and rotates the first grid served so a busy grid cannot starve another. */
     public static void tick() {
         tickBudget().beginTick();
         int slices = 0;
-        for (Ae2PlannerBridge bridge : ACTIVE) slices += bridge.advanceCaptures();
+        List<Ae2PlannerBridge> active = new ArrayList<>(ACTIVE);
+        active.removeIf(bridge -> bridge.captures.isEmpty());
+        active.sort(Comparator.comparingLong(bridge -> bridge.bridgeId));
+        if (!active.isEmpty()) {
+            int start = Math.floorMod(bridgeRotation++, active.size());
+            for (int index = 0; index < active.size() && !tickBudget().exhausted(); index++) {
+                slices += active.get((start + index) % active.size()).advanceCaptures();
+            }
+        }
         // One sample per tick that really captured something, so idle ticks cannot flatter the p95.
         if (slices > 0) metrics().recordTick(tickBudget().spentThisTick());
     }
@@ -580,6 +593,7 @@ public final class Ae2PlannerBridge {
     public static void cancelForServerStop() {
         for (Ae2PlannerBridge bridge : ACTIVE) bridge.invalidate("server stopping");
         ACTIVE.clear();
+        bridgeRotation = 0L;
     }
 
     private void recordStatus(long generation, String status) {

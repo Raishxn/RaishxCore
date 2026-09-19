@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0-beta.1
+
+### Fixed
+
+- Cooperative snapshot timeout now counts only cumulative main-thread work inside capture slices;
+  idle time between server ticks no longer forces healthy captures to fall back to AE2.
+- `DeferredPlanFuture` now remains interruptible while waiting for its delegate and applies one
+  timeout budget to both the delegate handoff and the plan calculation.
+- The production capture pump now rotates which active grid is served first each tick, preventing a
+  continuously busy grid from starving later grids when it consumes the shared budget.
+
 ## 0.1.0-alpha.4
 
 ### Added
@@ -92,4 +103,3 @@
 - Added server-side machine packet validation and rate limiting.
 - Added standalone tests, sources jar and Maven publication support.
 - Integrated UFO Future 3.0.0-alpha.1 as the first real consumer.
-

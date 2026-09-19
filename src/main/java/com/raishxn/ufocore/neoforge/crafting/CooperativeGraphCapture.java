@@ -12,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.LongSupplier;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -165,6 +166,12 @@ public final class CooperativeGraphCapture<P> {
 
     public CooperativeGraphCapture(Source<P> source, String target, long revision,
                                    Ae2PlanningSnapshot.CaptureLimits limits, PlanningCancellation cancellation) {
+        this(source, target, revision, limits, cancellation, System::nanoTime);
+    }
+
+    CooperativeGraphCapture(Source<P> source, String target, long revision,
+                            Ae2PlanningSnapshot.CaptureLimits limits, PlanningCancellation cancellation,
+                            LongSupplier nanoTime) {
         this.source = Objects.requireNonNull(source, "source");
         this.target = Objects.requireNonNull(target, "target");
         if (revision < 0L) throw new IllegalArgumentException("revision must be non-negative");
@@ -172,7 +179,7 @@ public final class CooperativeGraphCapture<P> {
         this.revision = revision;
         this.limits = Objects.requireNonNull(limits, "limits");
         this.cancellation = Objects.requireNonNull(cancellation, "cancellation");
-        this.budget = new Ae2PlanningSnapshot.CaptureBudget(limits);
+        this.budget = new Ae2PlanningSnapshot.CaptureBudget(limits, nanoTime);
         pending.addLast(target);
     }
 
@@ -196,12 +203,7 @@ public final class CooperativeGraphCapture<P> {
                 if (worked && budget.sliceExhausted()) return Status.YIELDED;
                 if (cancellation.isCancelled()) return discard();
                 budget.checkpoint();
-                try {
-                    step();
-                } catch (Ae2PlanningSnapshot.Declined declined) {
-                    discard();
-                    throw declined;
-                }
+                step();
                 worked = true;
             }
             if (cancellation.isCancelled()) return discard();
@@ -210,9 +212,13 @@ public final class CooperativeGraphCapture<P> {
             publish();
             lastPublishNanos = Math.max(0L, System.nanoTime() - publishing);
             return Status.COMPLETED;
+        } catch (Ae2PlanningSnapshot.Declined declined) {
+            discard();
+            throw declined;
         } finally {
             lastSliceNanos = Math.max(0L, System.nanoTime() - started);
             lastSliceEdges = budget.sliceEdgesUsed();
+            budget.endSlice();
         }
     }
 

@@ -4,8 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import appeng.api.networking.crafting.ICraftingPlan;
+import java.time.Duration;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -47,6 +49,37 @@ class DeferredPlanFutureTest {
         var deferred = new DeferredPlanFuture();
 
         assertThrows(TimeoutException.class, () -> deferred.get(1, TimeUnit.MILLISECONDS));
+    }
+
+    @Test
+    void timedGetUsesOneDeadlineForTheHandoffAndThePlan() {
+        var deferred = new DeferredPlanFuture();
+        deferred.complete(new CompletableFuture<>());
+
+        assertTimeoutPreemptively(Duration.ofSeconds(1), () ->
+                assertThrows(TimeoutException.class, () -> deferred.get(10, TimeUnit.MILLISECONDS)));
+    }
+
+    @Test
+    void untimedGetCanBeInterruptedWhileWaitingForTheHandoff() throws Exception {
+        var deferred = new DeferredPlanFuture();
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        Thread waiter = new Thread(() -> {
+            try {
+                deferred.get();
+            } catch (Throwable thrown) {
+                failure.set(thrown);
+            }
+        }, "deferred-plan-future-test");
+
+        waiter.start();
+        waiter.interrupt();
+        waiter.join(1_000L);
+        if (waiter.isAlive()) deferred.abandon();
+
+        assertFalse(waiter.isAlive(), "get() ignored interruption while waiting for its delegate");
+        assertTrue(failure.get() instanceof InterruptedException,
+                "get() must expose InterruptedException, got " + failure.get());
     }
 
     @Test

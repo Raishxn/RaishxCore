@@ -13,7 +13,7 @@ numeric value has a validated range.
 | `planner.maxOperations` | `10000000` | Deterministic operation ceiling per attempt. | Next request |
 | `planner.maxDepth` | `100000` | Maximum dependency depth. | Next request |
 | `planner.checkpointInterval` | `128` | Operations between timeout and cancellation checks. | Next request |
-| `planner.snapshot.timeoutMillis` | `50` | Whole-capture deadline, counted across ticks, before AE2 fallback. | Next capture |
+| `planner.snapshot.timeoutMillis` | `50` | Cumulative main-thread time spent actively capturing across slices, before AE2 fallback; idle time between ticks is excluded. | Next capture |
 | `planner.snapshot.maxEdges` | `100000` | Pattern, input and output edge ceiling for one capture. | Next capture |
 | `planner.snapshot.maxKeys` | `25000` | Distinct serialized AE key ceiling for one capture. | Next capture |
 | `planner.snapshot.maxEstimatedBytes` | `67108864` | Conservative heap estimate ceiling for one snapshot. | Next capture |

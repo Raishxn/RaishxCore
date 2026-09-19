@@ -65,17 +65,17 @@ final class DeferredPlanFuture implements Future<ICraftingPlan> {
 
     @Override
     public ICraftingPlan get() throws InterruptedException, ExecutionException {
-        try {
-            return handoff.join().get();
-        } catch (java.util.concurrent.CompletionException failure) {
-            if (failure.getCause() instanceof CancellationException cancelledByOwner) throw cancelledByOwner;
-            throw new ExecutionException(failure.getCause());
-        }
+        return handoff.get().get();
     }
 
     @Override
     public ICraftingPlan get(long timeout, TimeUnit unit)
             throws InterruptedException, ExecutionException, TimeoutException {
-        return handoff.get(timeout, unit).get();
+        long timeoutNanos = unit.toNanos(timeout);
+        long started = System.nanoTime();
+        Future<ICraftingPlan> planning = handoff.get(timeout, unit);
+        long elapsed = Math.max(0L, System.nanoTime() - started);
+        long remaining = Math.max(0L, timeoutNanos - elapsed);
+        return planning.get(remaining, TimeUnit.NANOSECONDS);
     }
 }

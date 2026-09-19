@@ -8,6 +8,6 @@ displayName="RaishxCore development tests"
 [[dependencies.raishxcore_tests]]
 modId="raishxcore"
 type="required"
-versionRange="[0.1.0-alpha.4,)"
+versionRange="[0.1.0-beta.1,)"
 ordering="AFTER"
 side="BOTH"

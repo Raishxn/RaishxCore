@@ -14,6 +14,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.LongSupplier;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
@@ -77,9 +79,10 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
     }
 
     /**
-     * Limits of one capture. Total limits bound the whole capture, across ticks; slice limits bound one
-     * slice. The edge allowance makes a slice reproducible, the time allowance keeps one unusually fat
-     * key from monopolizing a tick, and the byte ceiling bounds the cache a snapshot may occupy.
+     * Limits of one capture. Total limits bound its cumulative active work across slices; slice limits
+     * bound one slice. The edge allowance makes a slice reproducible, the time allowance keeps one
+     * unusually fat key from monopolizing a tick, and the byte ceiling bounds the cache a snapshot may
+     * occupy.
      */
     public record CaptureLimits(Duration timeout, int maxEdges, int maxKeys, long maxEstimatedBytes,
                                 long sliceNanos, int sliceEdges) {
@@ -113,8 +116,9 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         private static final long KEY_OVERHEAD_BYTES = 256;
         private static final long PATTERN_OVERHEAD_BYTES = 256;
         private final CaptureLimits limits;
-        private final long started = System.nanoTime();
+        private final LongSupplier nanoTime;
         private final long timeoutNanos;
+        private long activeNanos;
         private int edges;
         private int keys;
         private long estimatedBytes;
@@ -122,9 +126,15 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         private long sliceNanos = Long.MAX_VALUE;
         private int sliceEdges = Integer.MAX_VALUE;
         private int sliceEdgeCount;
+        private boolean sliceActive;
 
         CaptureBudget(CaptureLimits limits) {
-            this.limits = java.util.Objects.requireNonNull(limits, "limits");
+            this(limits, System::nanoTime);
+        }
+
+        CaptureBudget(CaptureLimits limits, LongSupplier nanoTime) {
+            this.limits = Objects.requireNonNull(limits, "limits");
+            this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
             long nanos;
             try { nanos = limits.timeout().toNanos(); }
             catch (ArithmeticException overflow) { nanos = Long.MAX_VALUE; }
@@ -133,10 +143,21 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
 
         /** Starts one slice with its own edge and time allowance. */
         void beginSlice(long nanos, int maxEdges) {
-            sliceStarted = System.nanoTime();
+            if (sliceActive) throw new IllegalStateException("capture slice already active");
+            sliceStarted = nanoTime.getAsLong();
             sliceNanos = nanos;
             sliceEdges = maxEdges;
             sliceEdgeCount = 0;
+            sliceActive = true;
+        }
+
+        /** Charges only time spent inside a slice; idle server ticks are not capture work. */
+        void endSlice() {
+            if (!sliceActive) return;
+            long elapsed = sliceElapsed();
+            activeNanos = elapsed > Long.MAX_VALUE - activeNanos
+                    ? Long.MAX_VALUE : activeNanos + elapsed;
+            sliceActive = false;
         }
 
         /**
@@ -144,7 +165,7 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
          * started one always finishes it and progress never depends on wall-clock resolution.
          */
         boolean sliceExhausted() {
-            return sliceEdgeCount >= sliceEdges || System.nanoTime() - sliceStarted >= sliceNanos;
+            return sliceEdgeCount >= sliceEdges || sliceElapsed() >= sliceNanos;
         }
 
         /** Edges the current slice really consumed, including the atomic tail it could not interrupt. */
@@ -153,7 +174,10 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         }
 
         void checkpoint() {
-            if (System.nanoTime() - started >= timeoutNanos) throw new Declined("snapshot time limit");
+            long elapsed = sliceActive ? sliceElapsed() : 0L;
+            if (activeNanos >= timeoutNanos || elapsed >= timeoutNanos - activeNanos) {
+                throw new Declined("snapshot time limit");
+            }
         }
 
         void edge() {
@@ -173,6 +197,10 @@ public record Ae2PlanningSnapshot(ImmutableCraftingGraph<String> graph, String t
         }
 
         long estimatedBytes() { return estimatedBytes; }
+
+        private long sliceElapsed() {
+            return Math.max(0L, nanoTime.getAsLong() - sliceStarted);
+        }
 
         private static long stringBytes(String value) {
             try { return Math.multiplyExact((long) value.length(), Character.BYTES); }
