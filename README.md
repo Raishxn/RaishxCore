@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/image/header.gif" alt="RaishxCore" width="560" />
+</p>
+
 # RaishxCore
 
 Reusable NeoForge 1.21.1 foundation for AE2-oriented addons.
