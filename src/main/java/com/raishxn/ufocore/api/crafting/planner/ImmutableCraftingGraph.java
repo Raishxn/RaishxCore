@@ -30,6 +30,7 @@ public final class ImmutableCraftingGraph<K> {
     private final long revision;
     private final int keyCount;
     private final int edgeCount;
+    private final int routeChoiceAlternatives;
     private final Comparator<? super K> keyComparator;
     private final List<CraftingPattern<K>> patterns;
     private final NavigableMap<K, List<CompiledPattern<K>>> byOutput;
@@ -102,6 +103,13 @@ public final class ImmutableCraftingGraph<K> {
             edges += pattern.inputs().size() + pattern.outputs().size();
         }
         this.edgeCount = edges;
+        int alternatives = 0;
+        for (K key : uniqueKeys.keySet()) {
+            int routes = this.byOutput.getOrDefault(key, List.of()).size()
+                    + this.bySecondaryOutput.getOrDefault(key, List.of()).size();
+            alternatives += Math.max(0, routes - 1);
+        }
+        this.routeChoiceAlternatives = alternatives;
     }
 
     public static <K> ImmutableCraftingGraph<K> create(long revision,
@@ -120,6 +128,14 @@ public final class ImmutableCraftingGraph<K> {
 
     /** Input entries plus output entries across every compiled pattern. */
     public int edgeCount() { return edgeCount; }
+
+    /**
+     * Number of producer alternatives beyond the first, summed across keys.
+     * This is a cheap predictor for the planner's reversible-search width: a
+     * large recipe graph with one producer per key stays linear, while many
+     * interchangeable producers can create a combinatorial proof search.
+     */
+    public int routeChoiceAlternatives() { return routeChoiceAlternatives; }
     public Comparator<? super K> keyComparator() { return keyComparator; }
     public List<CraftingPattern<K>> patterns() { return patterns; }
     public List<CraftingPattern<K>> patternsFor(K output) {

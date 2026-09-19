@@ -13,7 +13,7 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 public final class CoreConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
     private static final PlannerPolicy DEFAULT_POLICY = new PlannerPolicy(
-            2, 32, 2_000, 10_000_000L, 100_000, 128,
+            2, 32, 2_000, 32, 10_000_000L, 100_000, 128,
             50, 100_000, 25_000, 64L * 1024 * 1024, 16, 128L * 1024 * 1024, 2, 512, 4, 8,
             4, 3, 10_000);
 
@@ -31,6 +31,12 @@ public final class CoreConfig {
     private static final ModConfigSpec.IntValue PLANNER_TIMEOUT_MILLIS = BUILDER
             .comment("Wall-clock deadline shared by all attempts for one crafting request.")
             .defineInRange("planner.timeoutMillis", DEFAULT_POLICY.timeoutMillis(), 10, 60_000);
+    private static final ModConfigSpec.IntValue PLANNER_EXACT_SEARCH_CHOICE_LIMIT = BUILDER
+            .comment("Producer alternatives beyond the first that switch RaishxCore from exact",
+                    "reversible search to its deterministic fast planner. Both modes are internal;",
+                    "this never delegates a request to AE2, Thunderbolt or Tianshu.")
+            .defineInRange("planner.exactSearchChoiceLimit", DEFAULT_POLICY.exactSearchChoiceLimit(),
+                    1, 1_000_000);
     private static final ModConfigSpec.LongValue PLANNER_MAX_OPERATIONS = BUILDER
             .comment("Maximum deterministic planner operations per attempt.")
             .defineInRange("planner.maxOperations", DEFAULT_POLICY.maxOperations(), 1_000L, 1_000_000_000L);
@@ -125,7 +131,8 @@ public final class CoreConfig {
     public static PlannerPolicy plannerPolicy() {
         if (!SPEC.isLoaded()) return DEFAULT_POLICY;
         return new PlannerPolicy(PLANNER_WORKERS.get(), PLANNER_QUEUE_CAPACITY.get(),
-                PLANNER_TIMEOUT_MILLIS.get(), PLANNER_MAX_OPERATIONS.get(), PLANNER_MAX_DEPTH.get(),
+                PLANNER_TIMEOUT_MILLIS.get(), PLANNER_EXACT_SEARCH_CHOICE_LIMIT.get(),
+                PLANNER_MAX_OPERATIONS.get(), PLANNER_MAX_DEPTH.get(),
                 PLANNER_CHECKPOINT_INTERVAL.get(), SNAPSHOT_TIMEOUT_MILLIS.get(), SNAPSHOT_MAX_EDGES.get(),
                 SNAPSHOT_MAX_KEYS.get(), SNAPSHOT_MAX_ESTIMATED_BYTES.get(), SNAPSHOT_CACHE_ENTRIES.get(),
                 SNAPSHOT_CACHE_BYTES.get(), SNAPSHOT_SLICE_MILLIS.get(), SNAPSHOT_SLICE_EDGES.get(),
@@ -143,14 +150,16 @@ public final class CoreConfig {
                 MissingWeightPolicy.parseOverrides(MISSING_WEIGHT_OVERRIDES.get()));
     }
 
-    public record PlannerPolicy(int workers, int queueCapacity, int timeoutMillis, long maxOperations,
+    public record PlannerPolicy(int workers, int queueCapacity, int timeoutMillis, int exactSearchChoiceLimit,
+                                long maxOperations,
                                 int maxDepth, int checkpointInterval, int snapshotTimeoutMillis,
                                 int snapshotMaxEdges, int snapshotMaxKeys, long snapshotMaxEstimatedBytes,
                                 int snapshotCacheEntries, long snapshotCacheBytes, int snapshotSliceMillis,
                                 int snapshotSliceEdges, int snapshotTickBudgetMillis, int maxPendingCaptures,
                                 int maxInFlightPerGrid, int circuitFailureThreshold, int circuitCooldownMillis) {
         public PlannerPolicy {
-            if (workers < 1 || queueCapacity < 1 || timeoutMillis < 1 || maxOperations < 1
+            if (workers < 1 || queueCapacity < 1 || timeoutMillis < 1 || exactSearchChoiceLimit < 1
+                    || maxOperations < 1
                     || maxDepth < 1 || checkpointInterval < 1 || snapshotTimeoutMillis < 1
                     || snapshotMaxEdges < 1 || snapshotMaxKeys < 1 || snapshotMaxEstimatedBytes < 1
                     || snapshotCacheEntries < 1 || snapshotCacheBytes < 1 || snapshotSliceMillis < 1

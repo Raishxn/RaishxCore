@@ -75,6 +75,24 @@ public final class IterativeCraftingPlanner<K> {
     }
 
     public PlanningResult<K> plan(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request) {
+        return plan(graph, request, true);
+    }
+
+    /**
+     * Plans without enumerating the Cartesian product of producer choices.
+     *
+     * <p>The same stock-aware route ordering, batching, byproduct accounting and cycle guards are
+     * used as by the exact planner, but a shortage is returned from the best deterministic route
+     * selection instead of trying every combination merely to prove that shortage. This keeps large
+     * modpack graphs linear in the selected plan and, importantly, remains a RaishxCore calculation:
+     * no external AE2 planning provider is involved.
+     */
+    public PlanningResult<K> planFast(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request) {
+        return plan(graph, request, false);
+    }
+
+    private PlanningResult<K> plan(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request,
+                                   boolean exhaustiveChoices) {
         Objects.requireNonNull(graph, "graph");
         Objects.requireNonNull(request, "request");
         long started = nanoTime.getAsLong();
@@ -91,7 +109,12 @@ public final class IterativeCraftingPlanner<K> {
                 // has a single route has nothing to choose, so it must not pay for the computation.
                 Map<K, BigInteger> leafCosts = hasRouteChoice(graph)
                         ? leafCosts(graph, budget) : Map.of();
-                if (!search(graph, request, state, ranks, leafCosts, budget, false)) {
+                if (!exhaustiveChoices) {
+                    // Dense graphs normally spend nearly all their time proving that every other
+                    // combination has the same shortage. Select the best routes once and preserve
+                    // that useful plan instead of discarding it for an exponential proof.
+                    search(graph, request, state, ranks, leafCosts, budget, true);
+                } else if (!search(graph, request, state, ranks, leafCosts, budget, false)) {
                     // Shortage reporting starts from a fresh snapshot, never speculative leftovers.
                     state = new State(graph, request);
                     // The discarded search's choices are not the returned plan's, so report the ones

@@ -19,6 +19,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class IterativeCraftingPlannerTest {
+    @Test void countsOnlyProducerRoutesBeyondTheFirstAsChoiceAlternatives() {
+        var directA = pattern("direct-a", Map.of("raw-a", amount(1)), Map.of("target", amount(1)));
+        var directB = pattern("direct-b", Map.of("raw-b", amount(1)), Map.of("target", amount(1)));
+        var unique = pattern("unique", Map.of("ore", amount(1)), Map.of("ingot", amount(1)));
+        var secondary = new CraftingPattern<>("secondary", 0, Map.of("dust", amount(1)),
+                Map.of("main", amount(1), "target", amount(1)), Set.of("main"));
+
+        var graph = graph(1, List.of(directA, directB, unique, secondary));
+
+        assertEquals(2, graph.routeChoiceAlternatives(),
+                "the second direct route and the secondary route are the two alternatives");
+    }
+
     @Test void createsAnExactPlanWithBatchingAndByproducts() {
         var plate = pattern("plate", Map.of("ingot", amount(3)), Map.of("plate", amount(2), "dust", amount(1)));
         var graph = graph(7, List.of(plate));
@@ -61,6 +74,29 @@ class IterativeCraftingPlannerTest {
         assertEquals(amount(5), result.plan().patternExecutions().values().stream()
                 .reduce(UfoAmount.ZERO, UfoAmount::add));
         assertEquals(amount(3), result.plan().missing().get("copper"));
+    }
+
+    @Test void fastPlannerKeepsDenseMissingGraphsInsideRaishxCoreWithoutEnumeratingChoices() {
+        int depth = 80;
+        ArrayList<CraftingPattern<String>> patterns = new ArrayList<>(depth * 2);
+        for (int i = 0; i < depth; i++) {
+            patterns.add(pattern("a-" + i, Map.of("k" + (i + 1), amount(1)),
+                    Map.of("k" + i, amount(1))));
+            patterns.add(pattern("b-" + i, Map.of("k" + (i + 1), amount(1)),
+                    Map.of("k" + i, amount(1))));
+        }
+        var graph = graph(3, patterns);
+        var limits = new PlanningLimits(100_000, depth + 1, Duration.ofSeconds(1), 16);
+
+        var result = new IterativeCraftingPlanner<String>().planFast(graph,
+                new PlanningRequest<>("k0", amount(1), Map.of(), limits, PlanningCancellation.NEVER));
+
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, result.status());
+        assertEquals(Map.of("k" + depth, amount(1)), result.plan().missing());
+        assertEquals(depth, result.plan().patternExecutions().size());
+        assertTrue(result.diagnostics().operations() < 100_000,
+                () -> "fast planning must scale with the selected plan, operations="
+                        + result.diagnostics().operations());
     }
 
     @Test void handlesADeepGraphWithAnExplicitStack() {

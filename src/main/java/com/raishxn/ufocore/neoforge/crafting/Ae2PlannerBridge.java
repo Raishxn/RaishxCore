@@ -442,15 +442,18 @@ public final class Ae2PlannerBridge {
         if (remaining <= 0) throw new TimeoutException("RaishxCore planning deadline");
         var limits = new PlanningLimits(policy.maxOperations(), policy.maxDepth(),
                 Duration.ofNanos(remaining), policy.checkpointInterval());
-        var result = new IterativeCraftingPlanner<String>().plan(loops.augmentedGraph(),
-                new PlanningRequest<>(snapshot.target(), UfoAmount.of(amount), stock, limits,
-                        PlanningCancellation.NEVER, missingWeights));
+        var planner = new IterativeCraftingPlanner<String>();
+        var request = new PlanningRequest<>(snapshot.target(), UfoAmount.of(amount), stock, limits,
+                PlanningCancellation.NEVER, missingWeights);
+        var graph = loops.augmentedGraph();
+        var result = graph.routeChoiceAlternatives() >= policy.exactSearchChoiceLimit()
+                ? planner.planFast(graph, request)
+                : planner.plan(graph, request);
         if (statusGeneration == generation) {
             lastDiagnostics = result.diagnostics();
             lastStatus = result.status().name();
             // Read off the graph rather than counted here: the numbers were computed once when the
             // snapshot was compiled, so asking how large it is costs nothing per plan.
-            var graph = loops.augmentedGraph();
             lastGraphKeys = graph.keyCount();
             lastGraphPatterns = graph.patternCount();
             lastGraphEdges = graph.edgeCount();
@@ -488,7 +491,14 @@ public final class Ae2PlannerBridge {
         plan.extractedFromInventory().forEach((id, amount) ->
                 used.add(snapshot.keys().get(id), amount.longValueExact()));
         KeyCounter missing = new KeyCounter();
-        plan.missing().forEach((id, amount) -> missing.add(snapshot.keys().get(id), amount.longValueExact()));
+        plan.missing().forEach((id, amount) -> {
+            long displayAmount = toAe2MissingDisplayAmount(amount);
+            if (amount.asBigInteger().compareTo(BigInteger.valueOf(Long.MAX_VALUE)) > 0) {
+                LOG.warn("AE2 cannot display the exact missing amount for {} ({}); capping only the simulation UI counter at Long.MAX_VALUE.",
+                        id, amount);
+            }
+            missing.add(snapshot.keys().get(id), displayAmount);
+        });
         Map<IPatternDetails, Long> times = new HashMap<>();
         Map<String, UfoAmount> demand = new HashMap<>();
         Map<String, UfoAmount> produced = new HashMap<>();
@@ -503,10 +513,15 @@ public final class Ae2PlannerBridge {
             entry.getKey().outputs().forEach((key, value) ->
                     produced.merge(key, value.multiply(entry.getValue().asBigInteger()), UfoAmount::add));
         }
-        // Keep all AE2 counters representable; no silent saturation of required resources or jobs.
-        for (var amount : produced.values()) amount.longValueExact();
+        // AE2's public plan uses long counters. Pattern executions and committed inventory use stay
+        // exact, while a missing-ingredient preview may cap only its display counter: it is a
+        // simulation and therefore can never be submitted to a CPU. Demand remains BigInteger for
+        // byte accounting, so the planner's result itself is not truncated.
+        if (plan.complete()) {
+            for (var amount : produced.values()) amount.longValueExact();
+        }
         for (var entry : demand.entrySet()) {
-            entry.getValue().longValueExact();
+            if (plan.complete()) entry.getValue().longValueExact();
             BigInteger divisor = BigInteger.valueOf(snapshot.amountsPerByte().get(entry.getKey()));
             BigInteger numerator = entry.getValue().asBigInteger().multiply(BigInteger.valueOf(8));
             bytes = bytes.add(numerator.add(divisor).subtract(BigInteger.ONE).divide(divisor));
@@ -514,6 +529,10 @@ public final class Ae2PlannerBridge {
         return new CraftingPlan(new GenericStack(snapshot.keys().get(plan.target()), plan.requested().longValueExact()),
                 bytes.longValueExact(), !plan.complete(), snapshot.multiplePaths(), used, new KeyCounter(), missing,
                 Map.copyOf(times));
+    }
+
+    static long toAe2MissingDisplayAmount(UfoAmount amount) {
+        return amount.asBigInteger().min(BigInteger.valueOf(Long.MAX_VALUE)).longValueExact();
     }
 
     /** Records that this request was declined by the config kill-switch. */
