@@ -5,6 +5,9 @@ import appeng.api.crafting.PatternDetailsHelper;
 import appeng.api.networking.crafting.CalculationStrategy;
 import appeng.api.networking.crafting.ICraftingPlan;
 import appeng.api.stacks.AEItemKey;
+import appeng.api.stacks.AEKey;
+import appeng.api.stacks.GenericStack;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import net.minecraft.gametest.framework.GameTest;
@@ -24,6 +27,44 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 @GameTestHolder("raishxcore_tests")
 @PrefixGameTestTemplate(false)
 public final class PlannerDegradationGameTests {
+    @GameTest(template = "empty", timeoutTicks = 240)
+    public static void returnedInputStaysInsideCorePlanner(GameTestHelper helper) {
+        var fixture = new PlannerGameTests.Fixture(helper);
+        IPatternDetails base = fixture.pattern(1);
+        IPatternDetails catalyst = new IPatternDetails() {
+            private final IInput[] inputs = {new IInput() {
+                private final GenericStack[] possible = {new GenericStack(fixture.raw, 1)};
+
+                @Override public GenericStack[] getPossibleInputs() { return possible; }
+                @Override public long getMultiplier() { return 1; }
+                @Override public boolean isValid(AEKey input, net.minecraft.world.level.Level level) {
+                    return fixture.raw.equals(input);
+                }
+                @Override public AEKey getRemainingKey(AEKey template) { return fixture.raw; }
+            }};
+
+            @Override public AEItemKey getDefinition() { return base.getDefinition(); }
+            @Override public IInput[] getInputs() { return inputs; }
+            @Override public List<GenericStack> getOutputs() {
+                return List.of(new GenericStack(fixture.product, 1));
+            }
+        };
+        fixture.addPattern(catalyst);
+        fixture.register();
+        await(helper, fixture.request(8, CalculationStrategy.REPORT_MISSING_ITEMS), plan -> {
+            helper.assertTrue(plan != null && !plan.simulation(),
+                    "returned input should produce an executable Core plan");
+            helper.assertTrue(plan.usedItems().get(fixture.raw) == 1,
+                    "returned input should be drawn once as a reusable seed");
+            helper.assertTrue(plan.patternTimes().get(catalyst) == 8,
+                    "returned-input pattern should execute eight times");
+            helper.assertTrue(fixture.diagnostics().lastPlan() != null,
+                    "returned input was delegated to AE2");
+            fixture.close();
+            helper.succeed();
+        });
+    }
+
     @GameTest(template = "empty", timeoutTicks = 240)
     public static void substitutionAlternativesStayInsideCorePlanner(GameTestHelper helper) {
         try {

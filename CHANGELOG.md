@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+## 0.1.0-beta.2 - 2026-09-21
+
+### Added
+
+- AE2's crafting-confirmation screen now appends `RaishxPlanner` only when that
+  exact request was calculated by RaishxCore. The source is carried with the
+  request future and synchronized with the menu, so concurrent requests and a
+  deferred fallback to AE2 cannot display a stale or false badge.
+
 ## 0.1.0-beta.1
 
 ### Fixed

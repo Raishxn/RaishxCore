@@ -11,6 +11,8 @@ import appeng.api.networking.security.IActionSource;
 import appeng.api.stacks.*;
 import appeng.api.storage.MEStorage;
 import com.raishxn.ufocore.neoforge.crafting.PlannerGridService;
+import com.raishxn.ufocore.neoforge.crafting.CraftConfirmPlannerOriginAccess;
+import com.raishxn.ufocore.neoforge.crafting.PlanningOrigin;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Future;
@@ -94,9 +96,21 @@ public final class PlannerGameTests {
             helper.assertTrue(plan.usedItems().get(fixture.raw) == 8, "incorrect raw extraction");
             helper.assertTrue(fixture.diagnostics().lastPlan() != null,
                     "requester without a grid node bypassed the Core planner");
+            helper.assertTrue(PlanningOrigin.of(request) == PlanningOrigin.RAISHX,
+                    "a Core-produced menu request did not retain its RaishxPlanner origin");
             fixture.close();
             helper.succeed();
         });
+    }
+
+    @GameTest(template = "empty", timeoutTicks = 20)
+    public static void craftConfirmMenuReceivesTheOriginSyncMixin(GameTestHelper helper) {
+        // Loading the target validates the @Inject points and the implemented accessor on the
+        // authoritative menu class. The visual rendering belongs to the client-only mixin.
+        helper.assertTrue(CraftConfirmPlannerOriginAccess.class.isAssignableFrom(
+                        appeng.menu.me.crafting.CraftConfirmMenu.class),
+                "CraftConfirmMenu is missing the RaishxPlanner origin accessor");
+        helper.succeed();
     }
 
     private static void await(GameTestHelper helper, Future<ICraftingPlan> future, Consumer<ICraftingPlan> action) {

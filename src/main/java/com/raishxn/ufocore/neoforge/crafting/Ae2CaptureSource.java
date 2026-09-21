@@ -24,11 +24,13 @@ import org.jetbrains.annotations.Nullable;
  * free of grid types and can be driven across ticks and unit tested with plain strings. Native
  * handles are only kept to rebuild the AE2 plan after the worker is done; no worker ever sees them.
  *
- * <p>Refusals are deliberately loud: remainders, an unstable definition or an invalid input raises
+ * <p>Refusals are deliberately loud: an unstable definition or an invalid input raises
  * {@link Ae2PlanningSnapshot.Declined} instead of producing a graph that would misrepresent the grid.
  * A substitution slot is pinned deterministically to the encoded first option; that option is still
  * accepted by the native pattern, so the resulting plan is executable without multiplying every tag
- * alternative into the graph. The answers are cached per id, so a capture that resumes on
+ * alternative into the graph. Container remainders are captured as coproducts; a remainder equal to
+ * its input is captured as the reusable seed semantics the planner already supports. The answers are
+ * cached per id, so a capture that resumes on
  * a later tick never repeats a grid query, and patterns are validated one index at a time, so a key
  * with many patterns is captured across several slices instead of in one call.
  */
@@ -111,17 +113,48 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
         String patternId = Ae2PlanningSnapshot.canonical(definition.toTagGeneric(level.registryAccess()));
         if (capturedPatterns.contains(patternId)) return null;
         Map<String, Slot> inputs = new LinkedHashMap<>();
-        for (var input : pattern.getInputs()) {
+        Map<String, Slot> reusableInputs = new LinkedHashMap<>();
+        Map<String, Slot> remainderOutputs = new LinkedHashMap<>();
+        var patternInputs = pattern.getInputs();
+        for (int inputIndex = 0; inputIndex < patternInputs.length; inputIndex++) {
+            var input = patternInputs[inputIndex];
             var options = input.getPossibleInputs();
-            if (options.length == 0 || options[0].amount() <= 0 || input.getMultiplier() <= 0
-                    || input.getRemainingKey(options[0].what()) != null
-                    || !input.isValid(options[0].what(), level)) {
-                throw new Ae2PlanningSnapshot.Declined("invalid or remainder input");
+            if (options.length == 0) throw invalidInput(patternId, inputIndex, "no possible inputs");
+            if (options[0] == null || options[0].what() == null || options[0].amount() <= 0) {
+                throw invalidInput(patternId, inputIndex, "invalid primary input");
+            }
+            if (input.getMultiplier() <= 0) {
+                throw invalidInput(patternId, inputIndex, "non-positive multiplier " + input.getMultiplier());
             }
             AEKey inputKey = options[0].what();
+            if (!input.isValid(inputKey, level)) {
+                throw invalidInput(patternId, inputIndex, "primary input rejected: " + inputKey);
+            }
             String inputId = id(inputKey);
             UfoAmount amount = UfoAmount.of(options[0].amount()).multiply(input.getMultiplier());
-            inputs.merge(inputId, new Slot(amount, amountPerByte(inputId)), Ae2CaptureSource::merge);
+            AEKey remainderKey = input.getRemainingKey(inputKey);
+            if (remainderKey == null) {
+                inputs.merge(inputId, new Slot(amount, amountPerByte(inputId)), Ae2CaptureSource::merge);
+                continue;
+            }
+            String remainderId = id(remainderKey);
+            UfoAmount returned = UfoAmount.of(input.getMultiplier());
+            if (remainderId.equals(inputId)) {
+                if (amount.compareTo(returned) < 0) {
+                    throw invalidInput(patternId, inputIndex,
+                            "remainder exceeds primary input: " + inputKey);
+                }
+                UfoAmount consumed = amount.subtract(returned);
+                if (!consumed.isZero()) {
+                    inputs.merge(inputId, new Slot(consumed, amountPerByte(inputId)), Ae2CaptureSource::merge);
+                }
+                reusableInputs.merge(inputId,
+                        new Slot(returned, amountPerByte(inputId)), Ae2CaptureSource::merge);
+            } else {
+                inputs.merge(inputId, new Slot(amount, amountPerByte(inputId)), Ae2CaptureSource::merge);
+                remainderOutputs.merge(remainderId,
+                        new Slot(returned, amountPerByte(remainderId)), Ae2CaptureSource::merge);
+            }
         }
         Map<String, Slot> outputs = new LinkedHashMap<>();
         for (var result : pattern.getOutputs()) {
@@ -130,13 +163,15 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
             outputs.merge(outputId, new Slot(UfoAmount.of(result.amount()), amountPerByte(outputId)),
                     Ae2CaptureSource::merge);
         }
+        remainderOutputs.forEach((id, slot) -> outputs.merge(id, slot, Ae2CaptureSource::merge));
         if (outputs.isEmpty()) throw new Ae2PlanningSnapshot.Declined("pattern without outputs");
         String primary = id(pattern.getPrimaryOutput().what());
         if (!outputs.containsKey(primary)) {
             throw new Ae2PlanningSnapshot.Declined("primary output is not a declared output");
         }
         capturedPatterns.add(patternId);
-        return new PatternDetails<>(pattern, patternId, priority(pattern), inputs, outputs, Set.of(primary));
+        return new PatternDetails<>(pattern, patternId, priority(pattern), inputs, reusableInputs, outputs,
+                Set.of(primary));
     }
 
     private int priority(IPatternDetails pattern) {
@@ -167,5 +202,10 @@ final class Ae2CaptureSource implements CooperativeGraphCapture.Source<IPatternD
 
     private static Slot merge(Slot left, Slot right) {
         return new Slot(left.amount().add(right.amount()), left.amountPerByte());
+    }
+
+    private static Ae2PlanningSnapshot.Declined invalidInput(String patternId, int inputIndex, String reason) {
+        return new Ae2PlanningSnapshot.Declined(
+                "pattern " + patternId + " input " + inputIndex + ": " + reason);
     }
 }

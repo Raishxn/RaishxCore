@@ -13,7 +13,7 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 public final class CoreConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
     private static final PlannerPolicy DEFAULT_POLICY = new PlannerPolicy(
-            2, 32, 2_000, 32, 10_000_000L, 100_000, 128,
+            2, 32, 2_000, 8, 10_000_000L, 100_000, 128,
             50, 100_000, 25_000, 64L * 1024 * 1024, 16, 128L * 1024 * 1024, 2, 512, 4, 8,
             4, 3, 10_000);
 
@@ -34,6 +34,8 @@ public final class CoreConfig {
     private static final ModConfigSpec.IntValue PLANNER_EXACT_SEARCH_CHOICE_LIMIT = BUILDER
             .comment("Producer alternatives beyond the first that switch RaishxCore from exact",
                     "reversible search to its deterministic fast planner. Both modes are internal;",
+                    "Eight keeps real multi-route graphs out of exponential proof searches while",
+                    "leaving small shared-stock conflicts to the exact planner.",
                     "this never delegates a request to AE2, Thunderbolt or Tianshu.")
             .defineInRange("planner.exactSearchChoiceLimit", DEFAULT_POLICY.exactSearchChoiceLimit(),
                     1, 1_000_000);

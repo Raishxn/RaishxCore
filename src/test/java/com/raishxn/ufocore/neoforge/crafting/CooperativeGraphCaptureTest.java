@@ -258,6 +258,22 @@ class CooperativeGraphCaptureTest {
     }
 
     @Test
+    void reusableInputsSurviveCaptureAndRemainReachableDependencies() {
+        var grid = new FakeGrid();
+        grid.leaf("ore");
+        grid.leaf("mold");
+        grid.catalyst(TARGET, "ore", "mold");
+        var capture = capture(grid, PlanningCancellation.NEVER);
+
+        assertEquals(Status.COMPLETED, capture.advance(UNBOUNDED));
+
+        var pattern = capture.result().graph().patternsFor(TARGET).getFirst();
+        assertEquals(Map.of("ore", UfoAmount.ONE), pattern.inputs());
+        assertEquals(Map.of("mold", UfoAmount.ONE), pattern.reusableInputs());
+        assertTrue(grid.described.contains("mold"), "a reusable input must be traversed like any dependency");
+    }
+
+    @Test
     void totalEdgeLimitStopsTheCaptureAndKeepsNoPartialState() {
         var grid = chain();
         var limits = new Ae2PlanningSnapshot.CaptureLimits(Duration.ofSeconds(30), 3, 100, 1_000_000L);
@@ -465,6 +481,15 @@ class CooperativeGraphCaptureTest {
             recipes.computeIfAbsent(output, ignored -> new ArrayList<>()).add(new PatternDetails<>(
                     "handle-feedback", "pattern-feedback", 0, slots,
                     Map.of(output, new Slot(UfoAmount.of(1), 1)), Set.of(output)));
+            details.put(output, new KeyDetails(output, 1, false, recipes.get(output).size()));
+        }
+
+        void catalyst(String output, String input, String reusable) {
+            recipes.computeIfAbsent(output, ignored -> new ArrayList<>()).add(new PatternDetails<>(
+                    "handle-catalyst", "pattern-catalyst", 0,
+                    Map.of(input, new Slot(UfoAmount.ONE, 1)),
+                    Map.of(reusable, new Slot(UfoAmount.ONE, 1)),
+                    Map.of(output, new Slot(UfoAmount.ONE, 1)), Set.of(output)));
             details.put(output, new KeyDetails(output, 1, false, recipes.get(output).size()));
         }
 

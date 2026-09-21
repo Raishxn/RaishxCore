@@ -99,6 +99,33 @@ class IterativeCraftingPlannerTest {
                         + result.diagnostics().operations());
     }
 
+    @Test void elevenNestedChoicesNeedFastModeInsteadOfAnExponentialShortageProof() {
+        int choices = 11;
+        ArrayList<CraftingPattern<String>> patterns = new ArrayList<>(choices * 2);
+        for (int depth = 0; depth < choices; depth++) {
+            patterns.add(pattern("a-" + depth, Map.of("k" + (depth + 1), amount(1)),
+                    Map.of("k" + depth, amount(1))));
+            patterns.add(pattern("b-" + depth, Map.of("k" + (depth + 1), amount(1)),
+                    Map.of("k" + depth, amount(1))));
+        }
+        var graph = graph(4, patterns);
+        var limits = new PlanningLimits(10_000, choices + 1, Duration.ofSeconds(1), 32);
+        var request = new PlanningRequest<>("k0", amount(1), Map.of(), limits,
+                PlanningCancellation.NEVER);
+        var planner = new IterativeCraftingPlanner<String>();
+
+        assertEquals(11, graph.routeChoiceAlternatives(),
+                "matches the choice width measured on the real Cosmic String graph");
+        assertEquals(PlanningResult.Status.OPERATION_LIMIT, planner.plan(graph, request).status(),
+                "exact search must reproduce the combinatorial failure instead of hiding it behind wall time");
+
+        var fast = planner.planFast(graph, request);
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, fast.status());
+        assertEquals(Map.of("k11", amount(1)), fast.plan().missing());
+        assertTrue(fast.diagnostics().operations() < 1_000,
+                () -> "fast planning should visit one route, operations=" + fast.diagnostics().operations());
+    }
+
     @Test void handlesADeepGraphWithAnExplicitStack() {
         int depth = 20_000;
         ArrayList<CraftingPattern<String>> patterns = new ArrayList<>(depth);

@@ -22,14 +22,23 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>Cancellation is forwarded both ways: a caller cancelling this future marks the request abandoned,
  * so the bridge stops feeding that capture and cancels the planning future when there already is one.
  */
-final class DeferredPlanFuture implements Future<ICraftingPlan> {
+final class DeferredPlanFuture implements Future<ICraftingPlan>, OriginAwareFuture {
     private final CompletableFuture<Future<ICraftingPlan>> handoff = new CompletableFuture<>();
     private final AtomicReference<Future<ICraftingPlan>> delegate = new AtomicReference<>();
     private final AtomicBoolean cancelled = new AtomicBoolean();
+    private final AtomicReference<PlanningOrigin> origin = new AtomicReference<>(PlanningOrigin.NONE);
 
     /** Publishes the future that will produce the plan. Idempotent. */
     void complete(Future<ICraftingPlan> planning) {
-        if (planning != null && delegate.compareAndSet(null, planning)) handoff.complete(planning);
+        complete(planning, PlanningOrigin.RAISHX);
+    }
+
+    /** Publishes the future and the engine that actually owns its calculation. */
+    void complete(Future<ICraftingPlan> planning, PlanningOrigin planningOrigin) {
+        if (planning != null && delegate.compareAndSet(null, planning)) {
+            origin.set(planningOrigin);
+            handoff.complete(planning);
+        }
     }
 
     /** Completes with cancellation for an invalidation that is not a caller cancellation. */
@@ -41,6 +50,8 @@ final class DeferredPlanFuture implements Future<ICraftingPlan> {
     }
 
     boolean abandoned() { return cancelled.get(); }
+
+    @Override public PlanningOrigin planningOrigin() { return origin.get(); }
 
     @Override
     public boolean cancel(boolean mayInterruptIfRunning) {

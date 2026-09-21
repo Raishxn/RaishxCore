@@ -101,13 +101,21 @@ public final class CooperativeGraphCapture<P> {
      * as selectable routes, which is a strict subset of the outputs for a coproduct pattern.
      */
     public record PatternDetails<P>(P handle, String id, int priority, Map<String, Slot> inputs,
-                                    Map<String, Slot> outputs, Set<String> craftable) {
+                                    Map<String, Slot> reusableInputs, Map<String, Slot> outputs,
+                                    Set<String> craftable) {
+        /** Compatibility constructor for sources whose patterns have no reusable inputs. */
+        public PatternDetails(P handle, String id, int priority, Map<String, Slot> inputs,
+                              Map<String, Slot> outputs, Set<String> craftable) {
+            this(handle, id, priority, inputs, Map.of(), outputs, craftable);
+        }
+
         public PatternDetails {
             Objects.requireNonNull(handle, "handle");
             Objects.requireNonNull(id, "id");
             // Insertion-ordered copies: the traversal order must not depend on hash order, otherwise
             // which limit trips first could differ between two runs of the same grid.
             inputs = ordered(inputs);
+            reusableInputs = ordered(reusableInputs);
             outputs = ordered(outputs);
             craftable = Set.copyOf(craftable);
             if (id.isEmpty() || outputs.isEmpty() || !outputs.keySet().containsAll(craftable)) {
@@ -305,15 +313,19 @@ public final class CooperativeGraphCapture<P> {
         if (patterns.containsKey(recipe.id())) return;
         budget.pattern(recipe.id());
         verifySlots(recipe.inputs());
+        verifySlots(recipe.reusableInputs());
         verifySlots(recipe.outputs());
         Map<String, UfoAmount> inputs = new LinkedHashMap<>();
         recipe.inputs().forEach((inputId, slot) -> inputs.put(inputId, slot.amount()));
+        Map<String, UfoAmount> reusableInputs = new LinkedHashMap<>();
+        recipe.reusableInputs().forEach((inputId, slot) -> reusableInputs.put(inputId, slot.amount()));
         Map<String, UfoAmount> outputs = new LinkedHashMap<>();
         recipe.outputs().forEach((outputId, slot) -> outputs.put(outputId, slot.amount()));
-        patterns.put(recipe.id(), new CraftingPattern<>(recipe.id(), recipe.priority(), inputs, outputs,
-                recipe.craftable()));
+        patterns.put(recipe.id(), new CraftingPattern<>(recipe.id(), recipe.priority(), inputs,
+                reusableInputs, outputs, recipe.craftable()));
         handles.put(recipe.id(), recipe.handle());
         recipe.inputs().keySet().forEach(input -> pending.addLast(input));
+        recipe.reusableInputs().keySet().forEach(input -> pending.addLast(input));
         patternsCaptured++;
     }
 

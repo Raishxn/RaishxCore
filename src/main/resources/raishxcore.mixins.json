@@ -5,7 +5,11 @@
   "mixins": [
     "SharedCraftingCpuServiceMixin",
     "CraftingPatternRevisionMixin",
-    "CoreCraftingPlannerServiceMixin"
+    "CoreCraftingPlannerServiceMixin",
+    "CoreCraftConfirmMenuMixin"
+  ],
+  "client": [
+    "client.CoreCraftConfirmScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

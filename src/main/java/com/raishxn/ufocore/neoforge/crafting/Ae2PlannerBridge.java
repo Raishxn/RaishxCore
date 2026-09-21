@@ -421,6 +421,12 @@ public final class Ae2PlannerBridge {
         // Read once per request: the operator policy scales what consumers registered, and with nothing
         // registered or configured this is the constant empty map, so the unweighted path is untouched.
         Map<String, Long> missingWeights = CoreConfig.missingWeightPolicy().effective();
+        var planningGraph = loops.augmentedGraph();
+        LOG.debug("RaishxCore planning started target={} amount={} strategy={} graphKeys={} graphPatterns={} graphEdges={} routeAlternatives={} mode={} feedbackMacro={}",
+                snapshot.target(), amount, strategy, planningGraph.keyCount(), planningGraph.patternCount(),
+                planningGraph.edgeCount(), planningGraph.routeChoiceAlternatives(),
+                usesFastPlanner(planningGraph, policy.exactSearchChoiceLimit()) ? "fast" : "exact",
+                loops.applies());
         var full = attempt(snapshot, stock, amount, started, generation, policy, loops, missingWeights);
         if (full.status() == PlanningResult.Status.COMPLETE) return adapt(snapshot, full);
         if (strategy == CalculationStrategy.CRAFT_LESS) {
@@ -452,9 +458,13 @@ public final class Ae2PlannerBridge {
         var request = new PlanningRequest<>(snapshot.target(), UfoAmount.of(amount), stock, limits,
                 PlanningCancellation.NEVER, missingWeights);
         var graph = loops.augmentedGraph();
-        var result = graph.routeChoiceAlternatives() >= policy.exactSearchChoiceLimit()
+        var result = usesFastPlanner(graph, policy.exactSearchChoiceLimit())
                 ? planner.planFast(graph, request)
                 : planner.plan(graph, request);
+        LOG.debug("RaishxCore planning attempt target={} amount={} status={} operations={} maximumDepth={} elapsedNanos={} cycleCuts={}",
+                snapshot.target(), amount, result.status(), result.diagnostics().operations(),
+                result.diagnostics().maximumDepth(), result.diagnostics().elapsedNanos(),
+                result.diagnostics().cycleCuts());
         if (statusGeneration == generation) {
             lastDiagnostics = result.diagnostics();
             lastStatus = result.status().name();
@@ -496,6 +506,19 @@ public final class Ae2PlannerBridge {
         KeyCounter used = new KeyCounter();
         plan.extractedFromInventory().forEach((id, amount) ->
                 used.add(snapshot.keys().get(id), amount.longValueExact()));
+        // The neutral planner leaves a reusable seed in its remaining inventory because the recipe
+        // hands it back. AE2's CPU still has to reserve that seed before it can execute the first
+        // pattern. Reserve the largest amount any selected pattern needs, once per key, matching the
+        // maximum inventory dip its native simulator would report rather than multiplying by runs.
+        Map<String, UfoAmount> reusable = new HashMap<>();
+        plan.patternExecutions().keySet().forEach(pattern -> pattern.reusableInputs().forEach(
+                (id, amount) -> reusable.merge(id, amount, UfoAmount::max)));
+        reusable.forEach((id, required) -> {
+            UfoAmount availableSeed = plan.remaining().getOrDefault(id, UfoAmount.ZERO).min(required);
+            if (!availableSeed.isZero()) {
+                used.add(snapshot.keys().get(id), availableSeed.longValueExact());
+            }
+        });
         KeyCounter missing = new KeyCounter();
         plan.missing().forEach((id, amount) -> {
             long displayAmount = toAe2MissingDisplayAmount(amount);
@@ -511,7 +534,13 @@ public final class Ae2PlannerBridge {
         demand.put(plan.target(), plan.requested());
         BigInteger bytes = BigInteger.valueOf(8);
         for (var entry : plan.patternExecutions().entrySet()) {
-            times.merge(snapshot.patterns().get(entry.getKey().id()), entry.getValue().longValueExact(), Math::addExact);
+            long patternTimes = toAe2PatternDisplayAmount(entry.getValue(), plan.complete());
+            if (!plan.complete() && entry.getValue().asBigInteger().compareTo(BigInteger.valueOf(Long.MAX_VALUE)) > 0) {
+                LOG.warn("AE2 cannot display the exact simulated execution count for pattern {} ({}); capping only the simulation UI counter at Long.MAX_VALUE.",
+                        entry.getKey().id(), entry.getValue());
+            }
+            times.merge(snapshot.patterns().get(entry.getKey().id()), patternTimes,
+                    plan.complete() ? Math::addExact : Ae2PlannerBridge::saturatedAdd);
             bytes = bytes.add(entry.getValue().asBigInteger())
                     .add(BigInteger.valueOf(8L * (1 + entry.getKey().inputs().size())));
             entry.getKey().inputs().forEach((key, value) ->
@@ -519,6 +548,7 @@ public final class Ae2PlannerBridge {
             entry.getKey().outputs().forEach((key, value) ->
                     produced.merge(key, value.multiply(entry.getValue().asBigInteger()), UfoAmount::add));
         }
+        reusable.forEach((key, value) -> demand.merge(key, value, UfoAmount::add));
         // AE2's public plan uses long counters. Pattern executions and committed inventory use stay
         // exact, while a missing-ingredient preview may cap only its display counter: it is a
         // simulation and therefore can never be submitted to a CPU. Demand remains BigInteger for
@@ -539,6 +569,19 @@ public final class Ae2PlannerBridge {
 
     static long toAe2MissingDisplayAmount(UfoAmount amount) {
         return amount.asBigInteger().min(BigInteger.valueOf(Long.MAX_VALUE)).longValueExact();
+    }
+
+    static boolean usesFastPlanner(com.raishxn.ufocore.api.crafting.planner.ImmutableCraftingGraph<?> graph,
+                                   int exactSearchChoiceLimit) {
+        return graph.routeChoiceAlternatives() >= exactSearchChoiceLimit;
+    }
+
+    static long toAe2PatternDisplayAmount(UfoAmount amount, boolean complete) {
+        return complete ? amount.longValueExact() : amount.longValueSaturated();
+    }
+
+    private static long saturatedAdd(long left, long right) {
+        return left >= Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
     }
 
     /** Records that this request was declined by the config kill-switch. */
@@ -701,9 +744,9 @@ public final class Ae2PlannerBridge {
         void markReturned() { returned = true; }
 
         void deliver(Future<ICraftingPlan> planning) {
-            plan = planning;
+            plan = new OriginTrackingFuture(planning, PlanningOrigin.RAISHX);
             outcome = Outcome.PLANNING;
-            future.complete(planning);
+            future.complete(plan, PlanningOrigin.RAISHX);
         }
 
         /** No own plan for this attempt: answer with a fallback when the caller cannot take null. */
@@ -724,7 +767,7 @@ public final class Ae2PlannerBridge {
                 return;
             }
             lastStatus = "ae2 fallback: " + reason;
-            future.complete(vanilla);
+            future.complete(vanilla, PlanningOrigin.AE2);
         }
     }
 
