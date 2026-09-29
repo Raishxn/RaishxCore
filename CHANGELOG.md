@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-beta.3 - 2026-09-29
+
 ### Fixed
 
 - The shared crafting-pool bridge no longer replaces AE2's return value from
