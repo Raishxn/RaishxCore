@@ -15,6 +15,8 @@ import appeng.crafting.CraftingLink;
 import appeng.crafting.execution.CraftingSubmitResult;
 import appeng.me.service.CraftingService;
 import com.google.common.collect.ImmutableSet;
+import com.llamalad7.mixinextras.sugar.Local;
+import com.llamalad7.mixinextras.sugar.ref.LocalLongRef;
 import com.raishxn.ufocore.api.crafting.SharedCraftingCpuPool;
 import com.raishxn.ufocore.api.crafting.SharedCraftingCpuPoolProvider;
 import java.util.ArrayList;
@@ -113,27 +115,39 @@ public abstract class SharedCraftingCpuServiceMixin {
         for (SharedCraftingCpuPool pool : raishxcore$uniquePools()) pool.addWaitingKeys(currentlyCrafting);
     }
 
-    @Inject(method = "getCpus", at = @At("RETURN"), cancellable = true)
-    private void raishxcore$appendPoolCpus(CallbackInfoReturnable<ImmutableSet<ICraftingCPU>> cir) {
-        ImmutableSet.Builder<ICraftingCPU> result = ImmutableSet.builder();
-        result.addAll(cir.getReturnValue());
+    /*
+     * The three CPU-facing reads below must never replace AE2's return value from a cancellable
+     * RETURN injection. Other CPU add-ons (AdvancedAE's Quantum Computer, and the same pattern in
+     * NeoECO) hook these methods the same way, and a cancellable @Inject aborts the method the
+     * moment it sets a value, silently skipping every later injector from every other mod. That made
+     * the Quantum Computer disappear from the CPU list and never receive crafted items while
+     * RaishxCore was installed, even with the planner disabled. Mutating AE2's own accumulator, or
+     * the builder right before it is built, composes with any number of other add-ons instead: our
+     * contribution is already in the value they return.
+     */
+
+    @Inject(method = "getCpus", at = @At(
+            value = "INVOKE",
+            target = "Lcom/google/common/collect/ImmutableSet$Builder;build()Lcom/google/common/collect/ImmutableSet;"))
+    private void raishxcore$appendPoolCpus(CallbackInfoReturnable<ImmutableSet<ICraftingCPU>> cir,
+                                           @Local(ordinal = 0) ImmutableSet.Builder<ICraftingCPU> cpus) {
         for (SharedCraftingCpuPool pool : raishxcore$uniquePools()) {
             if (!pool.isActive()) continue;
-            result.addAll(pool.getActiveCpus());
-            if (pool.getAvailableStorage() > 0L) result.add(pool);
+            for (ICraftingCPU cpu : pool.getActiveCpus()) cpus.add(cpu);
+            if (pool.getAvailableStorage() > 0L) cpus.add(pool);
         }
-        cir.setReturnValue(result.build());
     }
 
-    @Inject(method = "insertIntoCpus", at = @At("RETURN"), cancellable = true)
+    @Inject(method = "insertIntoCpus", at = @At(value = "RETURN", shift = At.Shift.BY, by = -1))
     private void raishxcore$insertIntoPools(AEKey what, long amount, Actionable mode,
-                                            CallbackInfoReturnable<Long> cir) {
-        long inserted = cir.getReturnValue();
+                                            CallbackInfoReturnable<Long> cir,
+                                            @Local(ordinal = 1) LocalLongRef insertedRef) {
+        long inserted = insertedRef.get();
         for (SharedCraftingCpuPool pool : raishxcore$uniquePools()) {
             if (inserted >= amount) break;
             inserted += pool.insert(what, amount - inserted, mode);
         }
-        cir.setReturnValue(inserted);
+        insertedRef.set(inserted);
     }
 
     @Inject(method = "submitJob", at = @At("HEAD"), cancellable = true)
@@ -170,14 +184,15 @@ public abstract class SharedCraftingCpuServiceMixin {
         if (selected != null) cir.setReturnValue(selected.submitJob(grid, plan, source, requester));
     }
 
-    @Inject(method = "getRequestedAmount", at = @At("RETURN"), cancellable = true)
-    private void raishxcore$requested(AEKey key, CallbackInfoReturnable<Long> cir) {
-        long requested = cir.getReturnValue();
+    @Inject(method = "getRequestedAmount", at = @At(value = "RETURN", shift = At.Shift.BY, by = -1))
+    private void raishxcore$requested(AEKey key, CallbackInfoReturnable<Long> cir,
+                                      @Local(ordinal = 0) LocalLongRef requestedRef) {
+        long requested = requestedRef.get();
         for (SharedCraftingCpuPool pool : raishxcore$uniquePools()) {
             long addition = pool.getRequestedAmount(key);
             requested = requested >= Long.MAX_VALUE - addition ? Long.MAX_VALUE : requested + addition;
         }
-        cir.setReturnValue(requested);
+        requestedRef.set(requested);
     }
 
     @Inject(method = "hasCpu", at = @At("HEAD"), cancellable = true)

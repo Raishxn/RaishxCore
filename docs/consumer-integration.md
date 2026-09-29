@@ -67,6 +67,16 @@ and `planner.missingWeights.overrides` for one key, so a pack can disagree witho
 recompiling the addon. Weights are read on the planner worker, so registering while
 a plan is in flight cannot rewrite that plan.
 
+### Sharing the crafting service with other CPU add-ons
+
+A shared pool publishes its CPUs through the same AE2 methods other CPU add-ons
+extend: `getCpus`, `insertIntoCpus` and `getRequestedAmount`. The bridge must
+mutate AE2's own builder and accumulators instead of replacing a return value
+from a cancellable `RETURN` injection, because a cancellable callback aborts the
+method the moment it sets a value and silently skips every later callback from
+every other add-on. Consumers that register pools inherit this rule, and the UFO
+GameTests assert it with AdvancedAE's Quantum Computer present.
+
 Until Core 1.0, adapters outside `api` may receive breaking improvements.
 
 ## Release setup

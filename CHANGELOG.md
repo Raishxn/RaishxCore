@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- The shared crafting-pool bridge no longer replaces AE2's return value from
+  cancellable `RETURN` injections on `getCpus`, `insertIntoCpus` and
+  `getRequestedAmount`; it mutates AE2's own builder and accumulators instead.
+  A cancellable callback aborts the method as soon as it sets a value, which
+  silently skipped every later callback from other CPU add-ons: with AdvancedAE
+  installed, the Quantum Computer's CPUs disappeared from `getCpus()`, never
+  received crafted items through `insertIntoCpus()` and never reported their
+  waiting amounts. The bridge is not gated by the planner setting, which is why
+  disabling `planner.enabled` did not change the failure. Composition is now
+  order-independent and covers any number of CPU add-ons.
+
 ## 0.1.0-beta.2 - 2026-09-21
 
 ### Added
