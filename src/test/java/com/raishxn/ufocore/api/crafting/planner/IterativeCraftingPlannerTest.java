@@ -19,6 +19,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class IterativeCraftingPlannerTest {
+    @Test void rejectsLossySelfOutputWithoutUnderflowAndUsesTheProductiveRoute() {
+        // A processing pattern can consume more of an item than it returns as a byproduct.
+        var lossy = pattern("a-lossy", Map.of("ingot", amount(3)),
+                Map.of("plate", amount(1), "ingot", amount(1)));
+        var productive = pattern("z-productive", Map.of("ore", amount(1)),
+                Map.of("ingot", amount(1)));
+        var graph = graph(1, List.of(lossy, productive));
+        var request = new PlanningRequest<>("ingot", amount(2), Map.of("ore", amount(2)));
+        var planner = new IterativeCraftingPlanner<String>();
+
+        for (var result : List.of(planner.plan(graph, request), planner.planFast(graph, request))) {
+            assertEquals(PlanningResult.Status.COMPLETE, result.status());
+            assertEquals(Map.of(productive, amount(2)), result.plan().patternExecutions());
+            assertEquals(Map.of("ore", amount(2)), result.plan().extractedFromInventory());
+            assertTrue(result.plan().missing().isEmpty());
+        }
+    }
+
     @Test void countsOnlyProducerRoutesBeyondTheFirstAsChoiceAlternatives() {
         var directA = pattern("direct-a", Map.of("raw-a", amount(1)), Map.of("target", amount(1)));
         var directB = pattern("direct-b", Map.of("raw-b", amount(1)), Map.of("target", amount(1)));

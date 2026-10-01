@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.0-beta.4 - 2026-10-01
+
+### Fixed
+
+- Crafting calculations no longer throw `ArithmeticException: amount underflow` when a
+  pattern consumes more of an item than it returns as an output or byproduct. The planner
+  now computes this net balance as a signed integer, rejects the unproductive self-route,
+  and can use another valid producer. Both normal and fast planning are covered by a
+  regression test.
+
 ## 0.1.0-beta.3 - 2026-09-29
 
 ### Fixed

@@ -538,7 +538,10 @@ public final class IterativeCraftingPlanner<K> {
             for (PatternEntry<K> entry : pattern.outputs()) {
                 if (entry.key().equals(key)) selfProduced = selfProduced.add(entry.amount());
             }
-            BigInteger selfNet = selfProduced.subtract(selfConsumed).asBigInteger();
+            // A returned input/byproduct may be smaller than the consumed amount. This is a
+            // signed balance, not a non-negative material quantity; keep it signed so lossy
+            // self-routes reach the cycle guard instead of aborting the entire calculation.
+            BigInteger selfNet = selfProduced.asBigInteger().subtract(selfConsumed.asBigInteger());
             boolean growth = !selfConsumed.isZero() && selfNet.signum() > 0;
             // The caller already took the seed from stock, so it is not subtracted again: each run
             // adds the net, and the runs needed are the ceiling of what is still missing over it.
