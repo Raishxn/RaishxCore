@@ -295,7 +295,12 @@ public final class FeedbackCyclePlanner<K> {
             // batch's own decay plus it come to the depth of every turn but the last. Stating the whole
             // requirement as working stock instead would be checked once and never charged.
             UfoAmount decay = best.decay.getOrDefault(key, UfoAmount.ZERO);
-            reusable.put(key, working.getValue().subtract(decay));
+            UfoAmount returned = working.getValue().subtract(decay);
+            // A turn may consume its entire working stock. That is purely a consumed
+            // input; CraftingPattern requires every declared reusable amount to be positive.
+            if (!returned.isZero()) {
+                reusable.put(key, returned);
+            }
             if (!decay.isZero()) {
                 inputs.merge(key, decay, UfoAmount::add);
             }

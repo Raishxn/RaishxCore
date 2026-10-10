@@ -451,7 +451,11 @@ public final class Ae2PlannerBridge {
                                            Map<String, Long> missingWeights) throws TimeoutException {
         long timeoutNanos = Duration.ofMillis(policy.timeoutMillis()).toNanos();
         long remaining = timeoutNanos - (System.nanoTime() - started);
-        if (remaining <= 0) throw new TimeoutException("RaishxCore planning deadline");
+        if (remaining <= 0) {
+            LOG.warn("RaishxCore planning stopped target={} amount={} status=TIMED_OUT timeoutMillis={} elapsedNanos={}",
+                    snapshot.target(), amount, policy.timeoutMillis(), System.nanoTime() - started);
+            throw new TimeoutException("RaishxCore planning deadline");
+        }
         var limits = new PlanningLimits(policy.maxOperations(), policy.maxDepth(),
                 Duration.ofNanos(remaining), policy.checkpointInterval());
         var planner = new IterativeCraftingPlanner<String>();
@@ -477,7 +481,16 @@ public final class Ae2PlannerBridge {
         switch (result.status()) {
             case COMPLETE, MISSING_INGREDIENTS -> { return withLoopsExpanded(loops, result); }
             case CANCELLED -> throw new java.util.concurrent.CancellationException("RaishxCore planning cancelled");
-            default -> throw new TimeoutException("RaishxCore planning stopped: " + result.status());
+            default -> {
+                // Ordinary logs must preserve the actual stop reason: the async boundary
+                // otherwise presents time, operation and depth limits as the same deadline error.
+                LOG.warn("RaishxCore planning stopped target={} amount={} status={} operations={} maximumDepth={} elapsedNanos={} timeoutMillis={} maxOperations={} maxDepth={} graphKeys={} graphPatterns={} graphEdges={}",
+                        snapshot.target(), amount, result.status(), result.diagnostics().operations(),
+                        result.diagnostics().maximumDepth(), result.diagnostics().elapsedNanos(),
+                        policy.timeoutMillis(), policy.maxOperations(), policy.maxDepth(),
+                        graph.keyCount(), graph.patternCount(), graph.edgeCount());
+                throw new TimeoutException("RaishxCore planning stopped: " + result.status());
+            }
         }
     }
 
