@@ -13,6 +13,7 @@ import appeng.api.networking.storage.IStorageService;
 import appeng.api.stacks.AEKey;
 import appeng.crafting.CraftingLink;
 import appeng.crafting.execution.CraftingSubmitResult;
+import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.me.service.CraftingService;
 import com.google.common.collect.ImmutableSet;
 import com.llamalad7.mixinextras.sugar.Local;
@@ -22,6 +23,7 @@ import com.raishxn.ufocore.api.crafting.SharedCraftingCpuPoolProvider;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.jetbrains.annotations.Nullable;
@@ -52,6 +54,18 @@ public abstract class SharedCraftingCpuServiceMixin {
     @Unique private Map<IGridNode, SharedCraftingCpuPool> raishxcore$pools;
     @Unique private Set<IGridNode> raishxcore$providerNodes;
     @Unique private Set<SharedCraftingCpuPool> raishxcore$prepared;
+    /*
+     * Distinct pools, rebuilt only when raishxcore$pools changes. Every grid reads it twice per tick
+     * and again on each network insert, request query and link check, so building a fresh identity
+     * set per call allocated on paths that run for every grid on the server.
+     */
+    @Unique private @Nullable List<SharedCraftingCpuPool> raishxcore$uniquePoolsCache;
+    /*
+     * Last pool state that made AE2 rebuild currentlyCrafting: the newest change tick of any pool
+     * job and the number of pool job CPUs. AE2 does the same with its own CPUs' change ticks.
+     */
+    @Unique private long raishxcore$lastPoolChange = Long.MIN_VALUE;
+    @Unique private int raishxcore$lastPoolCpuCount;
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void raishxcore$initializePoolState(IGrid grid, IStorageService storageGrid,
@@ -71,6 +85,7 @@ public abstract class SharedCraftingCpuServiceMixin {
         SharedCraftingCpuPool removed = raishxcore$pools.remove(node);
         raishxcore$providerNodes.remove(node);
         if (removed != null) {
+            raishxcore$uniquePoolsCache = null;
             raishxcore$prepared.remove(removed);
             updateList = true;
         }
@@ -82,8 +97,11 @@ public abstract class SharedCraftingCpuServiceMixin {
         for (Class<?> machineClass : grid.getMachineClasses()) {
             for (IGridNode node : grid.getMachineNodes(machineClass)) nodes.add(node);
         }
-        raishxcore$pools.keySet().removeIf(node -> !nodes.contains(node));
-        raishxcore$providerNodes.removeIf(node -> !nodes.contains(node));
+        // Identity membership, as before, without a linear list search per tracked node.
+        Set<IGridNode> present = Collections.newSetFromMap(new IdentityHashMap<>(nodes.size()));
+        present.addAll(nodes);
+        if (raishxcore$pools.keySet().removeIf(node -> !present.contains(node))) raishxcore$uniquePoolsCache = null;
+        raishxcore$providerNodes.removeIf(node -> !present.contains(node));
         for (IGridNode node : nodes) raishxcore$refreshNode(node);
     }
 
@@ -98,12 +116,31 @@ public abstract class SharedCraftingCpuServiceMixin {
             opcode = Opcodes.GETFIELD,
             ordinal = 0))
     private void raishxcore$tickPools(CallbackInfo ci) {
+        List<SharedCraftingCpuPool> pools = raishxcore$uniquePools();
+        if (pools.isEmpty() && raishxcore$lastPoolCpuCount == 0 && raishxcore$lastPoolChange == Long.MIN_VALUE) return;
         long latest = Long.MIN_VALUE;
-        for (SharedCraftingCpuPool pool : raishxcore$uniquePools()) {
+        for (SharedCraftingCpuPool pool : pools) {
             latest = Math.max(latest, pool.tickCraftingLogic(energyGrid, (CraftingService) (Object) this));
             if (pool.consumeCpuListChanged()) updateList = true;
         }
-        if (latest != Long.MIN_VALUE) lastProcessedCraftingLogicChangeTick = -1L;
+        // A pool may tick only part of its jobs; the others still change when outputs arrive.
+        int cpuCount = 0;
+        for (SharedCraftingCpuPool pool : pools) {
+            for (ICraftingCPU cpu : pool.getActiveCpus()) {
+                cpuCount++;
+                if (cpu instanceof CraftingCPUCluster cluster) {
+                    latest = Math.max(latest, cluster.craftingLogic.getLastModifiedOnTick());
+                }
+            }
+        }
+        // Rebuild AE2's waiting-key set only when a pool job changed, as AE2 does for its own CPUs.
+        // Forcing it every tick made each grid with a busy pool copy, refill and diff
+        // currentlyCrafting (and notify its watchers' diff) on every server tick.
+        if (latest != raishxcore$lastPoolChange || cpuCount != raishxcore$lastPoolCpuCount) {
+            raishxcore$lastPoolChange = latest;
+            raishxcore$lastPoolCpuCount = cpuCount;
+            lastProcessedCraftingLogicChangeTick = -1L;
+        }
     }
 
     @Inject(method = "onServerEndTick", at = @At(
@@ -217,7 +254,10 @@ public abstract class SharedCraftingCpuServiceMixin {
         SharedCraftingCpuPool resolved = provider == null ? null : provider.getSharedCraftingCpuPool();
         SharedCraftingCpuPool previous = resolved == null
                 ? raishxcore$pools.remove(node) : raishxcore$pools.put(node, resolved);
-        if (previous != resolved) updateList = true;
+        if (previous != resolved) {
+            updateList = true;
+            raishxcore$uniquePoolsCache = null;
+        }
         if (resolved != null && raishxcore$prepared.add(resolved)) {
             resolved.prepareForCraftingService();
             resolved.restoreCraftingLinks(link -> {
@@ -227,10 +267,18 @@ public abstract class SharedCraftingCpuServiceMixin {
     }
 
     @Unique
-    private Set<SharedCraftingCpuPool> raishxcore$uniquePools() {
-        Set<SharedCraftingCpuPool> result = Collections.newSetFromMap(new IdentityHashMap<>());
-        result.addAll(raishxcore$pools.values());
-        return result;
+    private List<SharedCraftingCpuPool> raishxcore$uniquePools() {
+        List<SharedCraftingCpuPool> cached = raishxcore$uniquePoolsCache;
+        if (cached != null) return cached;
+        if (raishxcore$pools.isEmpty()) {
+            cached = List.of();
+        } else {
+            Set<SharedCraftingCpuPool> result = Collections.newSetFromMap(new IdentityHashMap<>());
+            result.addAll(raishxcore$pools.values());
+            cached = ListCopy.copyOf(result);
+        }
+        raishxcore$uniquePoolsCache = cached;
+        return cached;
     }
 
     /** Avoids a dependency on SequencedCollection APIs in mixin-generated bytecode. */
