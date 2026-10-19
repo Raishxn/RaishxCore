@@ -1,6 +1,6 @@
 # Auditoria de desempenho — RaishxCore
 
-Data: 2026-10-18 · base: `59e9a64` (0.2.1) · mudanças **sem commit**.
+Data: 2026-10-18 · base: `59e9a64` (0.2.1) · commits `de54f0d` (mixin) e `d9956ac` (javadoc).
 Relatório irmão (consumidor): `../UFO-Future-1.21.1/docs/auditoria-desempenho.md`.
 
 Escopo: tudo menos o algoritmo do `IterativeCraftingPlanner`, já otimizado e medido na sessão
@@ -38,7 +38,7 @@ Não houve medição em jogo; os ganhos são contagens de operações tiradas do
 | 3 | `raishxcore$rescanPools` (`:95`) | `ArrayList.contains` dentro de `removeIf` → O(pools × nós da grid) a cada `updateCPUClusters`. | B | B | **feito** |
 | 4 | `SharedCraftingCpuPool#containsCpu` (padrão) | Chamado por `hasCpu` para cada link, todo tick; o padrão itera `getActiveCpus()`, que no Nexus aloca uma lista. | M | B | **feito no UFO** (override sem alocação); padrão mantido |
 | 5 | `raishxcore$refreshDynamicPools` (`:109`) | `List.copyOf(providerNodes)` + `getService` por nó provedor, todo tick. Grids sem provedor recebem a lista vazia compartilhada (custo ~0); com provedor são poucos nós. | B | — | sem ação |
-| 6 | `raishxcore$rescanPools` | Percorre todos os nós de máquina do grid a cada `updateCPUClusters` (raro: muda quando a lista de CPUs muda). Em grids de dezenas de milhares de nós é um pico pontual. | B | M | proposta P2 |
+| 6 | `raishxcore$rescanPools` | Percorre todos os nós de máquina do grid a cada `updateCPUClusters` (raro: muda quando a lista de CPUs muda). Em grids de dezenas de milhares de nós é um pico pontual. | B | M | descartado (ver abaixo) |
 | 7 | Captura do grafo / planner em jogo | Já fatiada e com orçamento: 2 ms por fatia, orçamento global por tick, cache por revisão, deduplicação de requests, circuit breaker (ver `CoreConfig` e `docs/planner-cooperative-capture.md`). O cálculo roda em worker. | — | — | sem ação nesta auditoria |
 | 8 | `MultiblockInteriorRenderer` | Geometria procedural imediata (`RenderType.lightning`) por frame, poucos quads, distância 256. | B | — | sem ação |
 | 9 | `UfoMachinePacketGuard` | Checagem de menu, distância e rate limit por pacote C2S; barato. | — | — | sem ação |
@@ -61,13 +61,17 @@ Não houve medição em jogo; os ganhos são contagens de operações tiradas do
 Compatibilidade: nenhuma assinatura de injeção mudou (alvos do AE2 19.2.18 iguais). A interface
 `SharedCraftingCpuPool` não mudou.
 
-## Propostas pendentes (precisam de confirmação)
+## Rodada 2
 
-- **P1 — Documentar o contrato de `tickCraftingLogic`.** O mixin agora depende de o pool refletir
-  mudanças de jobs pelo valor retornado ou por `getActiveCpus()` com `CraftingCPUCluster`. Vale escrever
-  isso no javadoc de `SharedCraftingCpuPool` (mudança de API pública só em texto; não apliquei porque a
-  documentação da API é sua decisão).
-- **P2 — Rescan incremental.** Em `updateCPUClusters`, revisitar só os nós já conhecidos como provedores
-  mais os adicionados desde o último rescan (`addNode` já registra), em vez de todos os nós de máquina.
-- **P3 — Medição em jogo.** Perfil com spark num grid com Nexus executando um job grande (milhares de
-  chaves aguardadas) antes/depois do item 1, e o `PlannerCaptureSoakGameTests` com métricas de tick.
+- **P1 — contrato documentado** (`d9956ac`): o javadoc de `SharedCraftingCpuPool#tickCraftingLogic`
+  diz como um pool deve sinalizar mudanças de jobs para o AE2 recalcular as chaves em crafting.
+- **P2 — rescan incremental: descartado.** O rescan só roda em `updateCPUClusters` (quando a lista de
+  CPUs muda) e é ele que detecta nós cujo serviço de pool aparece depois do `addNode`. Revisitar só os
+  provedores conhecidos perderia esse caso para economizar um pico raro.
+- **P3 — medição em jogo:** não houve perfil com spark. A verificação funcional foi pelos GameTests do
+  UFO (57/57, inclui Nexus parallel crafting e compatibilidade de CPU), soak (2/2) e load do UFO, todos
+  usando este working tree via `includeBuild`.
+
+Observação: o UFO fixa `raishxcore_revision=59e9a64…` em `gradle.properties` para builds de release; os
+commits acima só entram num build de release do UFO quando esse pin for atualizado (a decisão é sua,
+porque o working tree do Core ainda tem as mudanças do planner sem commit).
