@@ -23,6 +23,15 @@ import org.jetbrains.annotations.Nullable;
 public interface SharedCraftingCpuPool extends ICraftingCPU {
     boolean isActive();
     Collection<? extends ICraftingCPU> getActiveCpus();
+    /**
+     * Ticks the pool's jobs once per grid tick.
+     *
+     * <p>Returns the newest {@code CraftingCpuLogic#getLastModifiedOnTick()} among the jobs it ticked,
+     * or {@link Long#MIN_VALUE} when it has none. AE2 rebuilds its set of keys being crafted only
+     * when this value, the change tick of a {@code CraftingCPUCluster} returned by
+     * {@link #getActiveCpus()}, or the number of active CPUs changes; a pool whose jobs change in
+     * any other way must also report it through {@link #consumeCpuListChanged()}.</p>
+     */
     long tickCraftingLogic(IEnergyService energyService, ICraftingService craftingService);
     void addWaitingKeys(Set<AEKey> waitingKeys);
     long insert(AEKey what, long amount, Actionable mode);
