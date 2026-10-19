@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.2 - 2026-10-18
+
 ### Fixed
 
 - Crafting jobs no longer fail with `RaishxCore planning stopped ... status=TIMED_OUT` when the
