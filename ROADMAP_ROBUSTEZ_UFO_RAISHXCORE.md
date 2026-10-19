@@ -24,7 +24,11 @@ ser validadas também pelo UFO Future como consumidor real.
       persistência, UI, capability filtering e testes.
 - [ ] Criar testes específicos da armadura modular.
 - [ ] Tornar custos e limites críticos da armadura configuráveis no servidor.
-- [ ] Executar QA de mundo 2.x e do modpack real.
+- [x] Executar QA de mundo 2.x e do modpack real. Autor confirmou em
+      2026-09-24 que executou ambos, sem perda de itens ou diferença percebida,
+      e relatou 20 TPS no servidor com as máquinas ligadas e aceleradas;
+      logs e detalhes da carga ainda precisam ser anexados ao relatório de QA
+      do UFO Future.
 
 Gate: builds, testes e GameTests verdes; artefatos limpos e reproduzíveis;
 nenhum pacote C2S fora da política central; documentação correspondente ao

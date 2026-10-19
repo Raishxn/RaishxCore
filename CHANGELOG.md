@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Fixed
+
+- Crafting jobs no longer fail with `RaishxCore planning stopped ... status=TIMED_OUT` when the
+  network is short of a material. The exact planner backtracked chronologically with one choice
+  point per *occurrence* of a key, so a key with two routes used in twenty places cost a million
+  combinations even though the graph reported a single route choice; a 58-pattern graph spent its
+  whole two-second deadline that way. The exact mode now runs in stages: the greedy selection
+  (returned as-is when it has no dead end, the same plan as before), two cheap proofs that every
+  plan is short (the target cannot be obtained from the stock, or a raw material is needed beyond
+  its stock on every route), a discrepancy search that pins a key to another route at every
+  occurrence at once, and only then the old search as a bounded backstop. When the bounded stages
+  find nothing, the greedy plan with its shortage is returned instead of a timeout. On the
+  reproduction case the shortage proof went from 29 million operations to about 700.
+
+### Changed
+
+- Large crafting plans are much faster, and shortages are smaller. Measured against Thunderbolt's
+  `CraftPlannerV2` in the new `plannerHeadToHead` benchmark (`docs/planner-head-to-head.md`):
+  - **Aggregated pass.** A request whose recipes are plain and acyclic is now planned once per item
+    with its total demand, in topological order, even when items have several routes. A route
+    choice no longer counts units that earlier choices in the same pass already claimed. On a
+    2405-pattern graph a plan went from 101 ms to 3.5 ms.
+  - **Shortage repair.** When that pass comes out short, the route most to blame for the largest
+    shortage is capped and the pass runs again. The fast planner now completes plans it used to
+    report as short.
+  - **Absent materials steer route choice.** Between otherwise equal routes, the one that needs
+    fewer materials the network has none of wins. On a large graph missing one common raw material,
+    the reported shortage dropped from 140 830 to 68 041 units.
+  - **Smaller unavoidable shortages.** The exact planner keeps the best incomplete plan its search
+    found, instead of the first greedy plan.
+  - **Bounded exact search.** The exact search may spend at most 256 times the cost of the greedy
+    pass (minimum 50 000 operations). A choice-heavy request that was simply short took 825 ms
+    before and takes 23 ms now.
+  - **Reachable part only.** Leaf costs and reachability are computed over the part of the graph the
+    request can reach, not the whole network.
+  - **No inventory copies.** The planner reads the network's inventory as an overlay instead of
+    copying it for every state.
+  - **Shared CPU pools no longer cost a full rebuild every tick.** While a shared pool (the UFO
+    Nexus) had a job running, AE2 was forced to rebuild its set of keys being crafted and diff it for
+    watchers on every server tick. It now rebuilds only when a pool job changes, like AE2 does for
+    its own CPUs, and grids without a pool no longer allocate in the CPU hooks.
+  - **Re-recorded benchmark baseline.** The `plannerBenchmark` baseline was re-recorded for these
+    changes. Tiny graphs allocate 1–15 KB more per plan; `wide1024` allocates 1.11 MB instead of
+    the 1.30 MB the staged planner had reached.
+
 ## 0.2 - 2026-10-01
 
 ### Fixed

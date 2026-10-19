@@ -38,6 +38,14 @@ public final class ImmutableCraftingGraph<K> {
     private final Map<K, List<CompiledPattern<K>>> byInput;
     private final List<CompiledPattern<K>> compiled;
     private final List<K> simpleDemandOrder;
+    /**
+     * Hash mirrors of the three indexes for lookups. The sorted maps keep the canonical order, but the
+     * planner asks them for one key at a time on every step, and a comparator lookup was the hottest
+     * frame of a large plan.
+     */
+    private final Map<K, List<CompiledPattern<K>>> outputLookup;
+    private final Map<K, List<CompiledPattern<K>>> secondaryLookup;
+    private final Map<K, List<CompiledPattern<K>>> inputLookup;
 
     private ImmutableCraftingGraph(long revision, Comparator<? super K> keyComparator,
                                    Collection<CraftingPattern<K>> source) {
@@ -94,6 +102,9 @@ public final class ImmutableCraftingGraph<K> {
         consumers.replaceAll((key, value) -> List.copyOf(value));
         this.byInput = Collections.unmodifiableMap(consumers);
         this.compiled = List.copyOf(compiledPatterns);
+        this.outputLookup = new HashMap<>(this.byOutput);
+        this.secondaryLookup = this.bySecondaryOutput.isEmpty() ? Map.of() : new HashMap<>(this.bySecondaryOutput);
+        this.inputLookup = new HashMap<>(this.byInput);
         this.simpleDemandOrder = compileSimpleDemandOrder(uniqueKeys.keySet());
         // Counted here rather than on demand: the compilation already visits every entry, and an
         // operator asking how large the graph is must not make every plan pay to be able to answer.
@@ -144,7 +155,7 @@ public final class ImmutableCraftingGraph<K> {
     }
 
     List<CompiledPattern<K>> compiledPatternsFor(K output) {
-        return byOutput.getOrDefault(output, List.of());
+        return outputLookup.getOrDefault(output, List.of());
     }
 
     /**
@@ -153,10 +164,10 @@ public final class ImmutableCraftingGraph<K> {
      * secondary over a route.
      */
     List<CompiledPattern<K>> secondaryRoutesFor(K output) {
-        return bySecondaryOutput.getOrDefault(output, List.of());
+        return secondaryLookup.getOrDefault(output, List.of());
     }
 
-    List<CompiledPattern<K>> consumersOf(K input) { return byInput.getOrDefault(input, List.of()); }
+    List<CompiledPattern<K>> consumersOf(K input) { return inputLookup.getOrDefault(input, List.of()); }
     List<CompiledPattern<K>> compiledPatterns() { return compiled; }
     /** Nonempty only for a single-route, single-output DAG. Ordered from products to ingredients. */
     List<K> simpleDemandOrder() { return simpleDemandOrder; }

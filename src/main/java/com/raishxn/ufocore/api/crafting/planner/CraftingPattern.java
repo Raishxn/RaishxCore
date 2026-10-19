@@ -160,9 +160,17 @@ public final class CraftingPattern<K> {
                 && craftableOutputs.equals(other.craftableOutputs);
     }
 
+    /** Cached: every field is immutable, and hashing the maps on each lookup dominated planner profiles. */
+    private int hash;
+
     @Override public int hashCode() {
-        return Objects.hash(id, priority, inputs, reusableInputs, fuzzyVariants, emittedInputs, durableUses,
-                outputs, craftableOutputs);
+        int value = hash;
+        if (value == 0) {
+            value = Objects.hash(id, priority, inputs, reusableInputs, fuzzyVariants, emittedInputs, durableUses,
+                    outputs, craftableOutputs);
+            hash = value;
+        }
+        return value;
     }
     @Override public String toString() { return id; }
 }

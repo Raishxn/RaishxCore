@@ -32,11 +32,11 @@ public final class CoreConfig {
             .comment("Wall-clock deadline shared by all attempts for one crafting request.")
             .defineInRange("planner.timeoutMillis", DEFAULT_POLICY.timeoutMillis(), 10, 60_000);
     private static final ModConfigSpec.IntValue PLANNER_EXACT_SEARCH_CHOICE_LIMIT = BUILDER
-            .comment("Producer alternatives beyond the first that switch RaishxCore from exact",
-                    "reversible search to its deterministic fast planner. Both modes are internal;",
-                    "Eight keeps real multi-route graphs out of exponential proof searches while",
-                    "leaving small shared-stock conflicts to the exact planner.",
-                    "this never delegates a request to AE2, Thunderbolt or Tianshu.")
+            .comment("Producer alternatives beyond the first that switch RaishxCore from its exact",
+                    "planner to its deterministic fast planner. The exact planner is bounded and falls",
+                    "back to the fast plan on its own, so lowering this is no longer needed to avoid",
+                    "timeouts; it only skips the search for a better route on very wide graphs.",
+                    "Both modes are internal: this never delegates a request to AE2, Thunderbolt or Tianshu.")
             .defineInRange("planner.exactSearchChoiceLimit", DEFAULT_POLICY.exactSearchChoiceLimit(),
                     1, 1_000_000);
     private static final ModConfigSpec.LongValue PLANNER_MAX_OPERATIONS = BUILDER

@@ -117,7 +117,7 @@ class IterativeCraftingPlannerTest {
                         + result.diagnostics().operations());
     }
 
-    @Test void elevenNestedChoicesNeedFastModeInsteadOfAnExponentialShortageProof() {
+    @Test void elevenNestedChoicesAreProvenShortWithoutEnumeratingThem() {
         int choices = 11;
         ArrayList<CraftingPattern<String>> patterns = new ArrayList<>(choices * 2);
         for (int depth = 0; depth < choices; depth++) {
@@ -134,14 +134,125 @@ class IterativeCraftingPlannerTest {
 
         assertEquals(11, graph.routeChoiceAlternatives(),
                 "matches the choice width measured on the real Cosmic String graph");
-        assertEquals(PlanningResult.Status.OPERATION_LIMIT, planner.plan(graph, request).status(),
-                "exact search must reproduce the combinatorial failure instead of hiding it behind wall time");
+        var exact = planner.plan(graph, request);
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, exact.status(),
+                "an unobtainable leaf is proven short instead of enumerating 2^11 route combinations");
+        assertEquals(Map.of("k11", amount(1)), exact.plan().missing());
+        assertTrue(exact.diagnostics().operations() < 1_000,
+                () -> "the proof should cost one pass, operations=" + exact.diagnostics().operations());
 
         var fast = planner.planFast(graph, request);
         assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, fast.status());
         assertEquals(Map.of("k11", amount(1)), fast.plan().missing());
         assertTrue(fast.diagnostics().operations() < 1_000,
                 () -> "fast planning should visit one route, operations=" + fast.diagnostics().operations());
+    }
+
+    /** A two-route key used in many places, the shape of the 58-pattern graph that timed out in play. */
+    private static ImmutableCraftingGraph<String> sharedPlateGraph(int uses, String finalKey, long finalAmount) {
+        var patterns = new ArrayList<CraftingPattern<String>>();
+        patterns.add(pattern("plate-a", Map.of("ingot", amount(1)), Map.of("plate", amount(1))));
+        patterns.add(pattern("plate-b", Map.of("dust", amount(1)), Map.of("plate", amount(1))));
+        var top = new java.util.LinkedHashMap<String, UfoAmount>();
+        for (int i = 0; i < uses; i++) {
+            String part = String.format(java.util.Locale.ROOT, "part%02d", i);
+            patterns.add(pattern("make-" + part, Map.of("plate", amount(1)), Map.of(part, amount(1))));
+            top.put(part, amount(1));
+        }
+        top.put(finalKey, amount(finalAmount));
+        patterns.add(pattern("assemble", top, Map.of("target", amount(1))));
+        return graph(5, patterns);
+    }
+
+    @Test void aSharedRouteUsedInManyPlacesDoesNotMultiplyTheShortageProof() {
+        var graph = sharedPlateGraph(20, "zrare", 2);
+        var request = new PlanningRequest<>("target", amount(1),
+                Map.of("ingot", amount(1_000), "dust", amount(1_000), "zrare", amount(1)),
+                PlanningLimits.DEFAULT, PlanningCancellation.NEVER);
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph, request);
+
+        assertEquals(1, graph.routeChoiceAlternatives(), "one choice in the graph, twenty in the old search");
+        assertEquals(PlanningResult.Status.MISSING_INGREDIENTS, result.status());
+        assertEquals(Map.of("zrare", amount(1)), result.plan().missing());
+        assertTrue(result.diagnostics().operations() < 5_000,
+                () -> "the old search spent 29 million operations here, now=" + result.diagnostics().operations());
+    }
+
+    @Test void oneRoutePinRepairsAConflictThatChronologicalBacktrackingPaidForPerOccurrence() {
+        int uses = 20;
+        // The rod at the end needs every ingot, so every plate has to come from dust. Greedy takes the
+        // ingot route first; the fix is one pin on the plate, not a combination per plate.
+        var patterns = new ArrayList<>(sharedPlateGraph(uses, "rod", uses).patterns());
+        patterns.add(pattern("rod", Map.of("ingot", amount(1)), Map.of("rod", amount(1))));
+        var graph = graph(6, patterns);
+        var request = new PlanningRequest<>("target", amount(1),
+                Map.of("ingot", amount(uses), "dust", amount(uses)), PlanningLimits.DEFAULT,
+                PlanningCancellation.NEVER);
+
+        var result = new IterativeCraftingPlanner<String>().plan(graph, request);
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status());
+        var runs = new java.util.HashMap<String, UfoAmount>();
+        result.plan().patternExecutions().forEach((pattern, count) -> runs.put(pattern.id(), count));
+        assertEquals(amount(uses), runs.get("plate-b"));
+        assertNull(runs.get("plate-a"));
+        assertTrue(result.diagnostics().operations() < 20_000,
+                () -> "operations=" + result.diagnostics().operations());
+    }
+
+    @Test void theFastPlannerRepairsASharedRawConflictByCappingTheBlamedRoute() {
+        // The first aggregated pass gives "a" the route through "c", which "b" needs and cannot avoid.
+        // The repair blames that route for the shortage of "c" and moves "a" onto "d".
+        var graph = graph(7, List.of(
+                pattern("a-c", Map.of("c", amount(1)), Map.of("a", amount(1))),
+                pattern("a-d", Map.of("d", amount(1)), Map.of("a", amount(1))),
+                pattern("b-c", Map.of("c", amount(1)), Map.of("b", amount(1))),
+                pattern("done", Map.of("a", amount(1), "b", amount(1)), Map.of("done", amount(1)))));
+        var request = new PlanningRequest<>("done", amount(1_000),
+                Map.of("c", amount(1_000), "d", amount(1_000)), PlanningLimits.DEFAULT, PlanningCancellation.NEVER);
+
+        var result = new IterativeCraftingPlanner<String>().planFast(graph, request);
+
+        assertEquals(PlanningResult.Status.COMPLETE, result.status());
+        var runs = new java.util.HashMap<String, UfoAmount>();
+        result.plan().patternExecutions().forEach((pattern, count) -> runs.put(pattern.id(), count));
+        assertEquals(amount(1_000), runs.get("a-d"));
+        assertNull(runs.get("a-c"));
+    }
+
+    @Test void theAggregatedPassNetsACoproductAndSchedulesItsProducerFirst() {
+        var split = new CraftingPattern<>("split", 0, Map.of("raw", amount(1)),
+                Map.of("a", amount(2), "b", amount(1)), Set.of("a"));
+        var graph = graph(8, List.of(split,
+                pattern("b-direct", Map.of("other", amount(1)), Map.of("b", amount(1))),
+                pattern("done", Map.of("a", amount(2), "b", amount(1)), Map.of("done", amount(1)))));
+        var request = new PlanningRequest<>("done", amount(1_000), Map.of("raw", amount(1_000)),
+                PlanningLimits.DEFAULT, PlanningCancellation.NEVER);
+
+        var plan = new IterativeCraftingPlanner<String>().planFast(graph, request).plan();
+
+        assertTrue(plan.complete(), () -> "the coproduct covers b: " + plan.missing());
+        var order = plan.schedule().stream().map(step -> step.pattern().id()).toList();
+        assertEquals(List.of("split", "done"), order);
+    }
+
+    @Test void aRouteThatEndsInAMaterialTheNetworkLacksLosesToADeeperStockedOne() {
+        // By leaf demand alone the rare route is cheaper, one unit against two. The network holds none
+        // of "rare", so that route is a shortage, and the stocked route must win on the first pass:
+        // "lost" is short whatever happens, which ends the repair before it could fix the choice.
+        var graph = graph(9, List.of(
+                pattern("x-rare", Map.of("mid-a", amount(1)), Map.of("x", amount(1))),
+                pattern("x-common", Map.of("mid-b", amount(1)), Map.of("x", amount(1))),
+                pattern("mid-a", Map.of("rare", amount(1)), Map.of("mid-a", amount(1))),
+                pattern("mid-b", Map.of("c1", amount(1), "c2", amount(1)), Map.of("mid-b", amount(1))),
+                pattern("done", Map.of("x", amount(1), "lost", amount(1)), Map.of("done", amount(1)))));
+        var request = new PlanningRequest<>("done", amount(10), Map.of("c1", amount(10), "c2", amount(10)),
+                PlanningLimits.DEFAULT, PlanningCancellation.NEVER);
+
+        var result = new IterativeCraftingPlanner<String>().planFast(graph, request);
+
+        assertEquals(Map.of("lost", amount(10)), result.plan().missing());
     }
 
     @Test void handlesADeepGraphWithAnExplicitStack() {

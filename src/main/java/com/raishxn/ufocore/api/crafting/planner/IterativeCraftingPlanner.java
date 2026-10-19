@@ -13,17 +13,25 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.LongSupplier;
 
 /**
  * Exact, stack-safe planner over immutable snapshots.
- * Single-route DAGs aggregate demands in topological order. Other graphs use explicit
- * continuations and a reversible journal, including choices that conflict with later siblings.
+ * Single-route DAGs aggregate demands in topological order. An acyclic cone of plain recipes with
+ * route choices does too, choosing each key's routes once for its whole demand and repairing a
+ * shortage by capping the route it is most to blame on; see {@code aggregatedPlan}. Other graphs, and
+ * a plan that pass leaves short in exact mode, use explicit
+ * continuations, and the exact mode settles route choices in stages that stay polynomial on the
+ * common shapes: greedy selection, cheap shortage proofs, a discrepancy search over route pins and,
+ * last, a bounded reversible search that can revise choices conflicting with later siblings. See
+ * {@code exactPlan}.
  * Selection is deterministic. Between routes that are otherwise equally viable it prefers the one
  * with the smaller total leaf demand, computed bottom-up once per plan, so a correct plan is not
  * several times more expensive than it has to be. That is a preference, not a proof: the first
@@ -64,7 +72,8 @@ public final class IterativeCraftingPlanner<K> {
             case 1 -> (left.deficit.signum() != 0) != (right.deficit.signum() != 0);
             case 2 -> (left.leafCost == null) != (right.leafCost == null);
             case 3 -> left.leafCost != null && right.leafCost != null
-                    && left.leafCost.compareTo(right.leafCost) != 0;
+                    && (left.leafCost.compareTo(right.leafCost) != 0
+                    || !Objects.equals(left.absentCost, right.absentCost));
             case 4 -> left.rank != right.rank;
             case 5 -> left.deficit.compareTo(right.deficit) != 0;
             case 6 -> left.cost.compareTo(right.cost) != 0;
@@ -91,6 +100,21 @@ public final class IterativeCraftingPlanner<K> {
         return plan(graph, request, false);
     }
 
+    /**
+     * Share of what is left of the hard limits that the route search may spend once the greedy plan
+     * is known. The rest is slack, so the search giving up never turns into a hard halt.
+     */
+    static final int EXACT_BUDGET_DIVISOR = 2;
+
+    /** Cone size from which the exact planner starts from the aggregated pass. */
+    static final int EXACT_AGGREGATE_MIN_PATTERNS = 16;
+
+    /** The exact stages may spend this many times the operations of the greedy pass they improve on. */
+    static final long EXACT_GREEDY_MULTIPLE = 256L;
+
+    /** Floor of that allowance, so a tiny greedy pass still leaves room for a few route pins. */
+    static final long EXACT_MINIMUM_OPERATIONS = 50_000L;
+
     private PlanningResult<K> plan(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request,
                                    boolean exhaustiveChoices) {
         Objects.requireNonNull(graph, "graph");
@@ -104,23 +128,42 @@ public final class IterativeCraftingPlanner<K> {
             if (!graph.simpleDemandOrder().isEmpty()) {
                 planDag(graph, request, state, budget);
             } else {
-                Map<K, Integer> ranks = reachability(graph, request, budget);
+                // Everything below works on the part of the graph the request can reach. Production graphs
+                // are a whole network, and the passes below used to walk all of it for every request.
+                Cone<K> cone = coneOf(graph, request.target(), budget);
+                Map<K, Integer> ranks = reachability(graph, request, cone, budget);
                 // The leaf demand pass only informs a choice between routes. A graph where every key
                 // has a single route has nothing to choose, so it must not pay for the computation.
-                Map<K, BigInteger> leafCosts = hasRouteChoice(graph)
-                        ? leafCosts(graph, budget) : Map.of();
-                if (!exhaustiveChoices) {
-                    // Dense graphs normally spend nearly all their time proving that every other
-                    // combination has the same shortage. Select the best routes once and preserve
-                    // that useful plan instead of discarding it for an exponential proof.
-                    search(graph, request, state, ranks, leafCosts, budget, true);
-                } else if (!search(graph, request, state, ranks, leafCosts, budget, false)) {
-                    // Shortage reporting starts from a fresh snapshot, never speculative leftovers.
-                    state = new State(graph, request);
-                    // The discarded search's choices are not the returned plan's, so report the ones
-                    // the simulation actually made rather than counting every route twice.
-                    budget.choiceLinks = null;
-                    search(graph, request, state, ranks, leafCosts, budget, true);
+                boolean choice = hasRouteChoice(graph, cone);
+                Map<K, BigInteger> leafCosts = choice ? leafCosts(graph, cone, budget) : Map.of();
+                // An acyclic cone of plain recipes is planned once per key with its whole demand,
+                // which is linear in the cone however many places a key is used in. Only a plan it
+                // cannot complete goes on to the per-occurrence stages below, and the better of the
+                // two answers is kept, so the stages can only improve on it.
+                // The exact planner's own stages are cheap and strongest on a handful of recipes; the
+                // aggregated pass pays off once a cone is large enough for keys to be shared. The fast
+                // planner always takes it, since there it is the better answer at any size.
+                boolean aggregate = !exhaustiveChoices || cone.patterns().size() >= EXACT_AGGREGATE_MIN_PATTERNS;
+                List<K> order = aggregate ? aggregatedOrder(graph, cone, request.target(), budget) : null;
+                State aggregated = order == null ? null
+                        : aggregatedPlan(graph, request, order, cone, ranks, leafCosts, budget);
+                // The fast planner keeps the aggregated answer even when it is short: measured against the
+                // per-occurrence pass it ties or wins on every shortage but the largest graphs, where it
+                // is a fraction of a percent off and the per-occurrence pass costs fifteen times more.
+                if (aggregated != null && (aggregated.deadEnds == 0 || !exhaustiveChoices)) {
+                    state = aggregated;
+                } else {
+                    if (!exhaustiveChoices) {
+                        // Dense graphs normally spend nearly all their time proving that every other
+                        // combination has the same shortage. Select the best routes once and preserve
+                        // that useful plan instead of discarding it for an exponential proof.
+                        search(graph, request, state, ranks, leafCosts, budget, true, null, null);
+                    } else {
+                        state = exactPlan(graph, request, ranks, leafCosts, budget);
+                    }
+                    if (aggregated != null && better(aggregated, state, request)) {
+                        state = aggregated;
+                    }
                 }
             }
             budget.check();
@@ -137,6 +180,329 @@ public final class IterativeCraftingPlanner<K> {
                 budget.operations, budget.maximumDepth, Math.max(0, nanoTime.getAsLong() - started),
                 PlanningResult.ShortageSummary.of(plan.shortage()), budget.cycleCuts,
                 budget.choiceLinks));
+    }
+
+    /**
+     * Finds a plan without a dead end, cheapest search first.
+     *
+     * <p>A dead end is a key that has to be supplied and has no route left: a raw material the stock
+     * cannot cover, or a key the plan is already expanding. The old exact search stopped at the first
+     * dead end and backtracked chronologically through every earlier choice, with one choice point per
+     * <em>occurrence</em> of a key. A key with two routes used in twenty places is one route choice in
+     * the graph and a million combinations to that search, which is how a 58-pattern graph spent eight
+     * million operations on a request that was simply short of one material.
+     *
+     * <p>The stages, each run only when the one before did not settle the request:
+     * <ol>
+     * <li>The greedy selection. Without a dead end it is exactly the plan the old exact search
+     *     returned, because that search's first descent makes the same choices.</li>
+     * <li>Two cheap proofs that every plan reaches a dead end: the target cannot be obtained from the
+     *     stock at all, or a raw material is needed beyond its stock on every route even when every
+     *     stocked intermediate counts as free. A request that is simply short ends here.</li>
+     * <li>A discrepancy search, as Thunderbolt's planner does it: a variant pins one key to another
+     *     route at every occurrence, variants with fewer pins run first, and each is one linear greedy
+     *     pass. A shared-stock conflict needs a pin or two, never a combination per occurrence.</li>
+     * <li>The chronological search, as a backstop for a plan that needs different routes for the same
+     *     key at different occurrences.</li>
+     * </ol>
+     * Stages two to four share a soft budget. When it runs out, or nothing better is found, the greedy
+     * plan is the answer: a request is never failed because proving its shortage was expensive.
+     */
+    private State exactPlan(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request,
+                            Map<K, Integer> ranks, Map<K, BigInteger> leafCosts, Budget budget) {
+        List<Decision<K>> decisions = new ArrayList<>();
+        State greedy = new State(graph, request);
+        long before = budget.operations;
+        search(graph, request, greedy, ranks, leafCosts, budget, true, null, decisions);
+        long[] greedyLinks = budget.choiceLinks;
+        if (greedy.deadEnds == 0) {
+            return greedy;
+        }
+        // The stages may spend a multiple of what the greedy pass cost, not a share of the whole limit:
+        // a choice-heavy graph that is simply short otherwise burned a second proving what greedy found.
+        budget.beginSoftLimit(EXACT_BUDGET_DIVISOR, Math.max(EXACT_MINIMUM_OPERATIONS,
+                (budget.operations - before) * EXACT_GREEDY_MULTIPLE));
+        List<State> best = new ArrayList<>(List.of(greedy));
+        try {
+            if (!provablyShort(graph, request, greedy, budget)) {
+                State found = discrepancySearch(graph, request, ranks, leafCosts, budget, greedy, decisions, best);
+                if (found == null) {
+                    State exhaustive = new State(graph, request);
+                    budget.choiceLinks = null;
+                    if (search(graph, request, exhaustive, ranks, leafCosts, budget, false, null, null)) {
+                        found = exhaustive;
+                    }
+                }
+                if (found != null) {
+                    return found;
+                }
+            }
+        } catch (SoftLimitReached expensive) {
+            // The greedy plan below is the answer; nothing of the abandoned search is kept.
+        } catch (PlanningHalt halt) {
+            // A route the greedy pass never took can run deeper than the limit. That rules the route
+            // out, not the request; time, operation and cancellation halts still end the request.
+            if (halt.status != PlanningResult.Status.DEPTH_LIMIT) throw halt;
+        } finally {
+            budget.endSoftLimit();
+        }
+        // The greedy pass made the choices worth reporting, even when a variant's shortage is smaller.
+        budget.choiceLinks = greedyLinks;
+        return best.getFirst();
+    }
+
+    /**
+     * Best-first search over route pins. Returns the first state without a dead end, or {@code null}
+     * once every pin reachable from the decisions the runs actually made has been tried.
+     */
+    private State discrepancySearch(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request,
+                                    Map<K, Integer> ranks, Map<K, BigInteger> leafCosts, Budget budget,
+                                    State greedy, List<Decision<K>> greedyDecisions, List<State> best) {
+        PriorityQueue<Variant<K>> queue = new PriorityQueue<>(Comparator.<Variant<K>>comparingInt(Variant::pins)
+                .thenComparing(Variant::parentShortfall)
+                .thenComparingLong(Variant::sequence));
+        Set<Map<K, CraftingPattern<K>>> seen = new HashSet<>();
+        seen.add(Map.of());
+        long[] sequence = {0L};
+        enqueuePins(Map.of(), 0, greedy.shortfall(), greedyDecisions, queue, seen, sequence, budget);
+        while (!queue.isEmpty()) {
+            budget.operation(0);
+            Variant<K> variant = queue.poll();
+            State state = new State(graph, request);
+            List<Decision<K>> decisions = new ArrayList<>();
+            budget.choiceLinks = null;
+            search(graph, request, state, ranks, leafCosts, budget, true, variant.preferences(), decisions);
+            if (state.deadEnds == 0) {
+                return state;
+            }
+            // Keeping the best incomplete variant means a shortage no pin removes is still reported
+            // at the smallest weighted amount any variant reached, not at whatever greedy found.
+            if (better(state, best.getFirst(), request)) best.set(0, state);
+            enqueuePins(variant.preferences(), variant.pins(), state.shortfall(), decisions, queue, seen,
+                    sequence, budget);
+        }
+        return null;
+    }
+
+    /** Queues one more pin on top of {@code base} for every route a run passed over. */
+    private void enqueuePins(Map<K, CraftingPattern<K>> base, int pins, BigInteger shortfall,
+                             List<Decision<K>> decisions, PriorityQueue<Variant<K>> queue,
+                             Set<Map<K, CraftingPattern<K>>> seen, long[] sequence, Budget budget) {
+        for (Decision<K> decision : decisions) {
+            if (base.containsKey(decision.key())) {
+                continue;
+            }
+            for (CraftingPattern<K> alternative : decision.routes()) {
+                budget.operation(0);
+                if (alternative.equals(decision.chosen())) {
+                    continue;
+                }
+                Map<K, CraftingPattern<K>> pinned = new HashMap<>(base);
+                pinned.put(decision.key(), alternative);
+                if (seen.add(pinned)) {
+                    queue.add(new Variant<>(Map.copyOf(pinned), pins + 1, shortfall, sequence[0]++));
+                }
+            }
+        }
+    }
+
+    /** Moves the pinned route's candidates to the front, keeping every other order as it was. */
+    private static <K> List<Candidate<K>> pinned(List<Candidate<K>> options, CraftingPattern<K> pin) {
+        if (pin == null || options.getFirst().pattern.pattern().equals(pin)) {
+            return options;
+        }
+        ArrayList<Candidate<K>> reordered = new ArrayList<>(options.size());
+        for (Candidate<K> option : options) {
+            if (option.pattern.pattern().equals(pin)) reordered.add(option);
+        }
+        if (reordered.isEmpty()) {
+            return options;
+        }
+        for (Candidate<K> option : options) {
+            if (!option.pattern.pattern().equals(pin)) reordered.add(option);
+        }
+        return reordered;
+    }
+
+    /**
+     * True when every plan reaches a dead end, by one of two arguments that cost a pass over the part
+     * of the graph below the target.
+     *
+     * <p>Obtainability ignores catalysts and self-fed seeds, since a missing one of those is reported
+     * as a shortage rather than ending the plan: what is left is a key with stock, or the output of a
+     * pattern whose consumed inputs are all obtainable. A target outside that set reaches a dead end on
+     * every route.
+     *
+     * <p>The amount bound is a least fixpoint, so it never exceeds what a real plan consumes. One unit
+     * of a key costs at least its cheapest producing pattern's consumed inputs divided by everything
+     * that pattern yields, so a coproduct is not charged twice; a stocked key and a catalyst cost
+     * nothing. When the target needs more of a raw material than the stock holds even so, every plan
+     * runs out of it.
+     */
+    private boolean provablyShort(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State greedy,
+                                  Budget budget) {
+        UfoAmount have = request.inventory().getOrDefault(request.target(), UfoAmount.ZERO);
+        if (have.compareTo(request.amount()) >= 0) {
+            return false;
+        }
+        Set<K> cone = cone(graph, request.target(), budget);
+        if (!obtainable(graph, request, cone, budget).contains(request.target())) {
+            return true;
+        }
+        double needed = request.amount().subtract(have).asBigInteger().doubleValue();
+        for (K raw : greedy.missing.keySet()) {
+            budget.operation(0);
+            if (raw.equals(request.target()) || !graph.compiledPatternsFor(raw).isEmpty()
+                    || !graph.secondaryRoutesFor(raw).isEmpty()) {
+                continue;
+            }
+            double stock = request.inventory().getOrDefault(raw, UfoAmount.ZERO).asBigInteger().doubleValue();
+            // Doubles can only make this bound slightly off, so a margin keeps rounding from proving
+            // a shortage that is not there.
+            if (rawCostPerUnit(graph, request, cone, raw, budget) * needed > stock * (1 + 1e-9) + 1e-6) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Every key some route to {@code target} may ask for, the target included. */
+    private Set<K> cone(ImmutableCraftingGraph<K> graph, K target, Budget budget) {
+        Set<K> cone = new HashSet<>();
+        ArrayDeque<K> queue = new ArrayDeque<>();
+        cone.add(target);
+        queue.add(target);
+        while (!queue.isEmpty()) {
+            K key = queue.removeFirst();
+            for (CompiledPattern<K> pattern : routesTo(graph, key)) {
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    budget.operation(0);
+                    if (cone.add(input.key())) queue.add(input.key());
+                    for (K variant : input.variants()) {
+                        if (cone.add(variant)) queue.add(variant);
+                    }
+                }
+            }
+        }
+        return cone;
+    }
+
+    private static <K> List<CompiledPattern<K>> routesTo(ImmutableCraftingGraph<K> graph, K key) {
+        List<CompiledPattern<K>> secondary = graph.secondaryRoutesFor(key);
+        if (secondary.isEmpty()) {
+            return graph.compiledPatternsFor(key);
+        }
+        ArrayList<CompiledPattern<K>> both = new ArrayList<>(graph.compiledPatternsFor(key));
+        both.addAll(secondary);
+        return both;
+    }
+
+    private Set<K> obtainable(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, Set<K> cone,
+                              Budget budget) {
+        Set<K> reached = new HashSet<>();
+        ArrayDeque<K> queue = new ArrayDeque<>();
+        request.inventory().forEach((key, amount) -> {
+            if (!amount.isZero() && cone.contains(key) && reached.add(key)) queue.add(key);
+        });
+        // Patterns that can make a key of the cone, each waiting on the consumed inputs it lacks.
+        Map<CompiledPattern<K>, Integer> pending = new IdentityHashMap<>();
+        Map<K, List<CompiledPattern<K>>> waiting = new HashMap<>();
+        for (K key : cone) {
+            for (CompiledPattern<K> pattern : routesTo(graph, key)) {
+                budget.operation(0);
+                if (pending.containsKey(pattern)) continue;
+                List<PatternEntry<K>> consumed = consumedFromOutside(pattern);
+                pending.put(pattern, consumed.size());
+                for (PatternEntry<K> input : consumed) {
+                    waiting.computeIfAbsent(input.key(), ignored -> new ArrayList<>()).add(pattern);
+                }
+                if (consumed.isEmpty()) {
+                    for (PatternEntry<K> output : pattern.outputs()) {
+                        if (reached.add(output.key())) queue.add(output.key());
+                    }
+                }
+            }
+        }
+        while (!queue.isEmpty()) {
+            K key = queue.removeFirst();
+            for (CompiledPattern<K> pattern : waiting.getOrDefault(key, List.of())) {
+                budget.operation(0);
+                if (pending.merge(pattern, -1, Integer::sum) == 0) {
+                    for (PatternEntry<K> output : pattern.outputs()) {
+                        if (reached.add(output.key())) queue.add(output.key());
+                    }
+                }
+            }
+        }
+        return reached;
+    }
+
+    /** Consumed inputs the pattern does not make itself: no catalysts and no self-fed seeds. */
+    private static <K> List<PatternEntry<K>> consumedFromOutside(CompiledPattern<K> pattern) {
+        List<PatternEntry<K>> consumed = new ArrayList<>(pattern.inputs().size());
+        for (PatternEntry<K> input : pattern.inputs()) {
+            if (input.reusable()) continue;
+            boolean selfFed = false;
+            for (PatternEntry<K> output : pattern.outputs()) {
+                if (output.key().equals(input.key())) {
+                    selfFed = true;
+                    break;
+                }
+            }
+            if (!selfFed) consumed.add(input);
+        }
+        return consumed;
+    }
+
+    /** A lower bound on the units of {@code raw} one more unit of the target consumes. */
+    private double rawCostPerUnit(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, Set<K> cone,
+                                  K raw, Budget budget) {
+        Map<K, Double> cost = new HashMap<>();
+        // Kleene iteration from zero: every iterate lies below the least fixpoint, so stopping after a
+        // bounded number of passes still leaves a valid bound.
+        int passes = Math.min(64, cone.size() + 1);
+        for (int pass = 0; pass < passes; pass++) {
+            boolean changed = false;
+            for (K key : cone) {
+                if (key.equals(raw) || key.equals(request.target())) continue;
+                if (!request.inventory().getOrDefault(key, UfoAmount.ZERO).isZero()) continue;
+                List<CompiledPattern<K>> routes = routesTo(graph, key);
+                if (routes.isEmpty()) continue;
+                double best = Double.POSITIVE_INFINITY;
+                for (CompiledPattern<K> pattern : routes) {
+                    best = Math.min(best, patternUnitCost(pattern, raw, cost, budget));
+                }
+                if (best > cost.getOrDefault(key, 0.0) * (1 + 1e-12) + 1e-12) {
+                    cost.put(key, best);
+                    changed = true;
+                }
+            }
+            if (!changed) break;
+        }
+        double best = Double.POSITIVE_INFINITY;
+        for (CompiledPattern<K> pattern : routesTo(graph, request.target())) {
+            best = Math.min(best, patternUnitCost(pattern, raw, cost, budget));
+        }
+        return Double.isInfinite(best) ? 0.0 : best;
+    }
+
+    private double patternUnitCost(CompiledPattern<K> pattern, K raw, Map<K, Double> cost, Budget budget) {
+        double inputs = 0.0;
+        for (PatternEntry<K> input : pattern.inputs()) {
+            budget.operation(0);
+            if (input.reusable()) continue;
+            double each = input.key().equals(raw) ? 1.0 : cost.getOrDefault(input.key(), 0.0);
+            for (K variant : input.variants()) {
+                each = Math.min(each, variant.equals(raw) ? 1.0 : cost.getOrDefault(variant, 0.0));
+            }
+            double amount = input.amount().asBigInteger().doubleValue();
+            inputs += input.durable() ? each * amount / Math.max(1, input.uses()) : each * amount;
+        }
+        double yield = 0.0;
+        for (PatternEntry<K> output : pattern.outputs()) {
+            yield += output.amount().asBigInteger().doubleValue();
+        }
+        return yield <= 0.0 ? Double.POSITIVE_INFINITY : inputs / yield;
     }
 
     private void planDag(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State state, Budget budget) {
@@ -176,15 +542,393 @@ public final class IterativeCraftingPlanner<K> {
         Collections.reverse(state.schedule);
     }
 
+    /**
+     * Demand order for the aggregated pass, products before ingredients, or {@code null} when the
+     * request's cone does not qualify for it.
+     *
+     * <p>The cone qualifies when every route in it consumes plain inputs only - no catalyst, no
+     * durable carrier, no variant slot, no input a recipe also makes - and the keys can be ordered so
+     * that a key comes before every input of every route to it and before every coproduct of its
+     * declared routes. The first rule makes a key's total demand final by the time it is planned; the
+     * second lets a coproduct be netted against the surplus that firing left behind.
+     */
+    private List<K> aggregatedOrder(ImmutableCraftingGraph<K> graph, Cone<K> cone, K target, Budget budget) {
+        // Two sweeps over the cone instead of an adjacency list: one counts each key's predecessors
+        // and checks the recipes qualify, the other walks the same edges again in Kahn order. A
+        // coproduct outside the cone is never demanded, so it needs no place in the order.
+        Map<K, Integer> incoming = new HashMap<>();
+        for (K key : cone.keys()) {
+            for (CompiledPattern<K> pattern : routesTo(graph, key)) {
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    budget.operation(0);
+                    if (input.reusable() || input.durable() || !input.variants().isEmpty()) return null;
+                    for (PatternEntry<K> output : pattern.outputs()) {
+                        if (output.key().equals(input.key())) return null;
+                    }
+                    incoming.merge(input.key(), 1, Integer::sum);
+                }
+                if (!pattern.pattern().craftableOutputs().contains(key)) continue;
+                for (PatternEntry<K> output : pattern.outputs()) {
+                    if (!output.key().equals(key) && cone.keys().contains(output.key())) {
+                        incoming.merge(output.key(), 1, Integer::sum);
+                    }
+                }
+            }
+        }
+        if (incoming.containsKey(target)) return null;
+        ArrayList<K> order = new ArrayList<>(cone.keys().size());
+        ArrayDeque<K> queue = new ArrayDeque<>();
+        queue.add(target);
+        while (!queue.isEmpty()) {
+            K key = queue.removeFirst();
+            order.add(key);
+            for (CompiledPattern<K> pattern : routesTo(graph, key)) {
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    budget.operation(0);
+                    if (incoming.merge(input.key(), -1, Integer::sum) == 0) queue.addLast(input.key());
+                }
+                if (!pattern.pattern().craftableOutputs().contains(key)) continue;
+                for (PatternEntry<K> output : pattern.outputs()) {
+                    if (!output.key().equals(key) && cone.keys().contains(output.key())
+                            && incoming.merge(output.key(), -1, Integer::sum) == 0) {
+                        queue.addLast(output.key());
+                    }
+                }
+            }
+        }
+        return order.size() == cone.keys().size() ? order : null;
+    }
+
+    /**
+     * Plans the cone once per key in {@code order}, then repairs a shortage by capping the route the
+     * shortage is most to blame on, the way Thunderbolt's planner repairs its linear pass. Returns the
+     * best pass by weighted shortage, or {@code null} when no pass could be scheduled.
+     *
+     * <p>Each key is planned with the demand every consumer above it has already placed, so a key used
+     * in two hundred places is one route decision, not two hundred. A route's inputs count as available
+     * only beyond what earlier decisions in the same pass already claimed of them, which is what makes
+     * a shared raw push later keys onto their other routes.
+     *
+     * <p>The repair needs nothing but the pass itself: the largest shortage is traced back through
+     * the recipes that consumed it, each charged in proportion to what it drew, and the route on a key
+     * with a choice that carries the most of it is capped so its share comes off. A capped route
+     * leaves the rest of the demand to the next route in the usual order.
+     */
+    private State aggregatedPlan(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, List<K> order,
+                                 Cone<K> cone, Map<K, Integer> ranks, Map<K, BigInteger> leafCosts,
+                                 Budget budget) {
+        int contended = 0;
+        for (K key : order) {
+            if (routesTo(graph, key).size() > 1) contended++;
+        }
+        int passes = contended == 0 ? 1 : (int) Math.min(64L, 4L + 2L * contended);
+        // Built on the first repair only: most requests complete on the first pass.
+        Map<CompiledPattern<K>, UfoAmount> caps = null;
+        Set<CompiledPattern<K>> ineffective = null;
+        State best = null;
+        int stale = 0;
+        for (int pass = 0; pass < passes; pass++) {
+            Aggregate run = aggregatedPass(graph, request, order, ranks, leafCosts, budget,
+                    caps == null ? Map.of() : caps);
+            if (run.scheduled && (best == null || better(run.state, best, request))) {
+                best = run.state;
+                stale = 0;
+            } else if (++stale >= REPAIR_PATIENCE) {
+                break;
+            }
+            if (run.scheduled && run.state.deadEnds == 0) break;
+            if (pass + 1 >= passes) break;
+            // A shortage every plan has cannot be repaired away; moving demand between routes would
+            // only spend passes rediscovering it.
+            if (pass == 0 && run.scheduled && provablyShort(graph, request, run.state, budget)) break;
+            if (caps == null) {
+                caps = new IdentityHashMap<>();
+                ineffective = Collections.newSetFromMap(new IdentityHashMap<>());
+            }
+            if (!blame(graph, order, cone, run, caps, ineffective, budget)) break;
+        }
+        return best;
+    }
+
+    /** Repair passes in a row that may fail to improve the best plan before the repair gives up. */
+    static final int REPAIR_PATIENCE = 3;
+
+    /**
+     * One aggregated pass: its state, whether a schedule exists for it, and what blame needs. Patterns
+     * are the graph's own compiled instances, so they are keyed by identity and never hashed.
+     */
+    private final class Aggregate {
+        final State state;
+        final boolean scheduled;
+        final Map<K, UfoAmount> gross;
+        final Map<CompiledPattern<K>, UfoAmount> fired;
+        final Map<CompiledPattern<K>, K> firedFor;
+        Aggregate(State state, boolean scheduled, Map<K, UfoAmount> gross,
+                  Map<CompiledPattern<K>, UfoAmount> fired, Map<CompiledPattern<K>, K> firedFor) {
+            this.state = state; this.scheduled = scheduled; this.gross = gross; this.fired = fired;
+            this.firedFor = firedFor;
+        }
+    }
+
+    private Aggregate aggregatedPass(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request,
+                                     List<K> order, Map<K, Integer> ranks, Map<K, BigInteger> leafCosts,
+                                     Budget budget, Map<CompiledPattern<K>, UfoAmount> caps) {
+        State state = new State(graph, request);
+        Map<K, UfoAmount> demand = new HashMap<>();
+        Map<K, UfoAmount> gross = new HashMap<>();
+        Map<CompiledPattern<K>, UfoAmount> fired = new IdentityHashMap<>(order.size());
+        Map<CompiledPattern<K>, K> firedFor = new IdentityHashMap<>(order.size());
+        // First firing of each pattern in demand order; reversed, it is the schedule to try first.
+        List<CompiledPattern<K>> firing = new ArrayList<>();
+        state.pending = demand;
+        demand.put(request.target(), request.amount());
+        for (K key : order) {
+            budget.operation(0);
+            UfoAmount needed = demand.remove(key);
+            if (needed == null) continue;
+            gross.put(key, needed);
+            UfoAmount required = state.consume(key, needed);
+            while (!required.isZero()) {
+                budget.operation(0);
+                Candidate<K> chosen = null;
+                List<Candidate<K>> options = candidates(graph, key, required, state, ranks, leafCosts, budget);
+                for (Candidate<K> option : options) {
+                    UfoAmount cap = caps.get(option.pattern);
+                    if (cap == null) {
+                        chosen = option;
+                        break;
+                    }
+                    UfoAmount left = cap.subtractClamped(fired.getOrDefault(option.pattern, UfoAmount.ZERO));
+                    if (left.isZero()) continue;
+                    chosen = left.compareTo(option.runs) < 0
+                            ? new Candidate<>(option.pattern, left, option.deficit, option.cost, option.rank,
+                                    option.leafCost, option.absentCost)
+                            : option;
+                    break;
+                }
+                // A cap moves demand onto another route; it never makes a key with a route short. When
+                // every route is capped the best one takes the rest, so a shortage is always a leaf.
+                if (chosen == null && !options.isEmpty()) chosen = options.getFirst();
+                if (chosen == null) {
+                    state.add(state.missing, key, required);
+                    state.deadEnds++;
+                    break;
+                }
+                CompiledPattern<K> pattern = chosen.pattern;
+                if (!fired.containsKey(pattern)) firing.add(pattern);
+                fired.merge(pattern, chosen.runs, UfoAmount::add);
+                firedFor.putIfAbsent(pattern, key);
+                state.add(state.executions, pattern.pattern(), chosen.runs);
+                for (PatternEntry<K> output : pattern.outputs()) {
+                    state.add(state.crafted, output.key(), multiply(output.amount(), chosen.runs));
+                }
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    budget.operation(0);
+                    demand.merge(input.key(), multiply(input.amount(), chosen.runs), UfoAmount::add);
+                }
+                required = state.consume(key, required);
+            }
+        }
+        state.pending = null;
+        boolean scheduled = schedule(state, request, firing, fired, budget);
+        return new Aggregate(state, scheduled, gross, fired, firedFor);
+    }
+
+    /**
+     * Orders the pass's firings so each runs only once its inputs are on hand, counting stock and the
+     * reported shortage as supplied up front - the contract every plan is replayed under. The pass
+     * already balances in total; what this proves is that a coproduct it netted is really made before
+     * the recipe that draws it. A firing that can only partly run is split. Returns {@code false} when
+     * no order exists, which sends the request back to the per-occurrence planner.
+     */
+    private boolean schedule(State state, PlanningRequest<K> request, List<CompiledPattern<K>> firing,
+                             Map<CompiledPattern<K>, UfoAmount> fired, Budget budget) {
+        boolean coproducts = false;
+        for (CompiledPattern<K> pattern : firing) {
+            if (pattern.outputs().size() > 1) {
+                coproducts = true;
+                break;
+            }
+        }
+        if (!coproducts) {
+            // Without a coproduct every input of a firing is made by firings planned after it, so the
+            // reverse of the pass is an order by construction and needs no simulation to prove it.
+            for (int i = firing.size() - 1; i >= 0; i--) {
+                state.schedule.add(new CraftingPlan.Execution<>(firing.get(i).pattern(), fired.get(firing.get(i))));
+            }
+            return true;
+        }
+        // Only what the firings move is tracked; stock and shortage are read from where they already are.
+        Map<K, BigInteger> moved = new HashMap<>();
+        // Ingredients last in demand order, so the reverse is usually already a valid order and one
+        // sweep schedules everything.
+        ArrayList<CompiledPattern<K>> remaining = new ArrayList<>(firing.size());
+        BigInteger[] runsLeft = new BigInteger[firing.size()];
+        for (int i = firing.size() - 1; i >= 0; i--) {
+            runsLeft[remaining.size()] = fired.get(firing.get(i)).asBigInteger();
+            remaining.add(firing.get(i));
+        }
+        int left = remaining.size();
+        while (left > 0) {
+            boolean progress = false;
+            for (int i = 0; i < remaining.size(); i++) {
+                BigInteger runs = runsLeft[i];
+                if (runs.signum() == 0) continue;
+                budget.operation(0);
+                CompiledPattern<K> pattern = remaining.get(i);
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    BigInteger have = request.inventory().getOrDefault(input.key(), UfoAmount.ZERO).asBigInteger()
+                            .add(state.missing.getOrDefault(input.key(), UfoAmount.ZERO).asBigInteger())
+                            .add(moved.getOrDefault(input.key(), BigInteger.ZERO));
+                    runs = runs.min(have.divide(input.amount().asBigInteger()));
+                }
+                if (runs.signum() == 0) continue;
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    moved.merge(input.key(), input.amount().asBigInteger().multiply(runs).negate(), BigInteger::add);
+                }
+                for (PatternEntry<K> output : pattern.outputs()) {
+                    moved.merge(output.key(), output.amount().asBigInteger().multiply(runs), BigInteger::add);
+                }
+                state.schedule.add(new CraftingPlan.Execution<>(pattern.pattern(), UfoAmount.of(runs)));
+                runsLeft[i] = runsLeft[i].subtract(runs);
+                if (runsLeft[i].signum() == 0) left--;
+                progress = true;
+            }
+            if (!progress) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Traces the largest shortage of a pass back through what consumed it and caps the route on a
+     * contended key that carries the most of it. Returns {@code false} when nothing is left to cap.
+     */
+    private boolean blame(ImmutableCraftingGraph<K> graph, List<K> order, Cone<K> cone, Aggregate run,
+                          Map<CompiledPattern<K>, UfoAmount> caps, Set<CompiledPattern<K>> ineffective,
+                          Budget budget) {
+        K shortKey = null;
+        BigInteger shortfall = BigInteger.ZERO;
+        for (K key : order) {
+            UfoAmount amount = run.state.missing.get(key);
+            if (amount != null && amount.asBigInteger().compareTo(shortfall) > 0) {
+                shortKey = key;
+                shortfall = amount.asBigInteger();
+            }
+        }
+        if (shortKey == null) return false;
+        while (true) {
+            Map<K, Double> blameByKey = new HashMap<>();
+            blameByKey.put(shortKey, shortfall.doubleValue());
+            CompiledPattern<K> blamed = null;
+            double blamedShare = 0.0;
+            for (int i = order.size() - 1; i >= 0; i--) {
+                K item = order.get(i);
+                Double blame = blameByKey.get(item);
+                if (blame == null || blame <= 0.0) continue;
+                UfoAmount demand = run.gross.get(item);
+                if (demand == null || demand.isZero()) continue;
+                double total = demand.asBigInteger().doubleValue();
+                for (Use<K> use : cone.usesOf(item)) {
+                    budget.operation(0);
+                    CompiledPattern<K> consumer = use.pattern();
+                    UfoAmount runs = run.fired.get(consumer);
+                    K firedFor = run.firedFor.get(consumer);
+                    if (runs == null || firedFor == null) continue;
+                    double units = use.entry().amount().asBigInteger().doubleValue()
+                            * runs.asBigInteger().doubleValue();
+                    double share = blame * units / total;
+                    if (share <= 0.0) continue;
+                    if (routesTo(graph, firedFor).size() > 1 && !ineffective.contains(consumer)
+                            && share > blamedShare) {
+                        blamed = consumer;
+                        blamedShare = share;
+                    }
+                    blameByKey.merge(firedFor, share, Double::sum);
+                }
+            }
+            if (blamed == null) return false;
+            double allocated = run.fired.get(blamed).asBigInteger().doubleValue();
+            double leafDemand = run.gross.get(shortKey).asBigInteger().doubleValue();
+            double contribution = blamedShare / shortfall.doubleValue() * leafDemand;
+            double delta = contribution <= 0.0 ? allocated : Math.ceil(shortfall.doubleValue() * allocated / contribution);
+            long cut = (long) Math.min(allocated, Math.max(1.0, delta));
+            UfoAmount newCap = run.fired.get(blamed).subtractClamped(UfoAmount.of(cut));
+            UfoAmount existing = caps.get(blamed);
+            if (existing != null && existing.compareTo(newCap) <= 0) {
+                ineffective.add(blamed);
+                continue;
+            }
+            caps.put(blamed, newCap);
+            return true;
+        }
+    }
+
+    /**
+     * Whether {@code candidate} is a better answer than {@code incumbent}: complete first, then the
+     * smaller weighted shortage, then fewer executions.
+     */
+    private boolean better(State candidate, State incumbent, PlanningRequest<K> request) {
+        if (candidate.missing.isEmpty() != incumbent.missing.isEmpty()) return candidate.missing.isEmpty();
+        int byShortage = candidate.weightedShortfall(request).compareTo(incumbent.weightedShortfall(request));
+        if (byShortage != 0) return byShortage < 0;
+        return candidate.totalExecutions().compareTo(incumbent.totalExecutions()) < 0;
+    }
+
+    /**
+     * The keys a request can ask for and every pattern that yields one of them. Closed downwards: each
+     * input of such a pattern is a key of the cone, so any bottom-up quantity computed over it equals
+     * the same quantity over the whole graph for every key of the cone.
+     */
+    private record Cone<K>(Set<K> keys, List<CompiledPattern<K>> patterns, Set<CompiledPattern<K>> contains,
+                           Map<K, List<Use<K>>> uses) {
+        /** Input entries of cone patterns that draw {@code key}, one per entry. */
+        List<Use<K>> usesOf(K key) {
+            return uses.getOrDefault(key, List.of());
+        }
+    }
+
+    /** One input entry of one pattern: the unit a bottom-up pass charges a key's cost to. */
+    private record Use<K>(CompiledPattern<K> pattern, PatternEntry<K> entry) {}
+
+    private Cone<K> coneOf(ImmutableCraftingGraph<K> graph, K target, Budget budget) {
+        Set<K> keys = new LinkedHashSet<>();
+        List<CompiledPattern<K>> patterns = new ArrayList<>();
+        Set<CompiledPattern<K>> contains = Collections.newSetFromMap(new IdentityHashMap<>(8));
+        // The graph's consumer index covers the whole network, so a raw material used everywhere would
+        // be walked across every recipe that uses it. This one only holds what the cone uses.
+        Map<K, List<Use<K>>> uses = new HashMap<>();
+        ArrayDeque<K> queue = new ArrayDeque<>();
+        keys.add(target);
+        queue.add(target);
+        while (!queue.isEmpty()) {
+            K key = queue.removeFirst();
+            for (CompiledPattern<K> pattern : routesTo(graph, key)) {
+                budget.operation(0);
+                if (!contains.add(pattern)) continue;
+                patterns.add(pattern);
+                for (PatternEntry<K> input : pattern.inputs()) {
+                    uses.computeIfAbsent(input.key(), ignored -> new ArrayList<>()).add(new Use<>(pattern, input));
+                    if (keys.add(input.key())) queue.add(input.key());
+                    for (K variant : input.variants()) {
+                        if (keys.add(variant)) queue.add(variant);
+                    }
+                }
+            }
+        }
+        return new Cone<>(keys, patterns, contains, uses);
+    }
+
     /** Linear hypergraph reachability. Each input edge is visited once, even in a reverse-sorted deep chain. */
     private Map<K, Integer> reachability(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request,
-                                        Budget budget) {
+                                        Cone<K> cone, Budget budget) {
         Map<K, Integer> ranks = new HashMap<>();
         ArrayDeque<K> queue = new ArrayDeque<>();
-        request.inventory().forEach((key, amount) -> { ranks.put(key, 0); queue.add(key); });
-        Map<CompiledPattern<K>, Integer> pending = new IdentityHashMap<>();
-        Map<CompiledPattern<K>, Integer> maxima = new IdentityHashMap<>();
-        for (CompiledPattern<K> pattern : graph.compiledPatterns()) {
+        request.inventory().forEach((key, amount) -> {
+            if (cone.keys().contains(key)) { ranks.put(key, 0); queue.add(key); }
+        });
+        Map<CompiledPattern<K>, Integer> pending = new IdentityHashMap<>(cone.patterns().size());
+        Map<CompiledPattern<K>, Integer> maxima = new IdentityHashMap<>(cone.patterns().size());
+        for (CompiledPattern<K> pattern : cone.patterns()) {
             budget.operation(0);
             pending.put(pattern, pattern.inputs().size());
             if (pattern.inputs().isEmpty()) {
@@ -195,7 +939,8 @@ public final class IterativeCraftingPlanner<K> {
         }
         while (!queue.isEmpty()) {
             K key = queue.removeFirst();
-            for (CompiledPattern<K> pattern : graph.consumersOf(key)) {
+            for (Use<K> use : cone.usesOf(key)) {
+                CompiledPattern<K> pattern = use.pattern();
                 budget.operation(0);
                 maxima.merge(pattern, ranks.get(key), Math::max);
                 if (pending.merge(pattern, -1, Integer::sum) == 0) {
@@ -209,9 +954,9 @@ public final class IterativeCraftingPlanner<K> {
         return ranks;
     }
 
-    /** True when some key is produced by more than one pattern, so route choice actually exists. */
-    private static <K> boolean hasRouteChoice(ImmutableCraftingGraph<K> graph) {
-        for (CompiledPattern<K> pattern : graph.compiledPatterns()) {
+    /** True when some key of the cone is produced by more than one pattern, so route choice actually exists. */
+    private static <K> boolean hasRouteChoice(ImmutableCraftingGraph<K> graph, Cone<K> cone) {
+        for (CompiledPattern<K> pattern : cone.patterns()) {
             for (PatternEntry<K> output : pattern.outputs()) {
                 if (graph.compiledPatternsFor(output.key()).size() > 1) return true;
             }
@@ -233,17 +978,21 @@ public final class IterativeCraftingPlanner<K> {
      * costs divided by how much it yields, rounded up, because a fractional unit cannot be supplied.
      * Keys and patterns on a cycle never resolve and stay absent, so they keep the previous ordering.
      */
-    private Map<K, BigInteger> leafCosts(ImmutableCraftingGraph<K> graph, Budget budget) {
+    private Map<K, BigInteger> leafCosts(ImmutableCraftingGraph<K> graph, Cone<K> cone, Budget budget) {
         Map<K, BigInteger> costs = new HashMap<>();
-        Map<CompiledPattern<K>, Integer> unresolvedInputs = new IdentityHashMap<>();
-        Map<CompiledPattern<K>, BigInteger> inputTotals = new IdentityHashMap<>();
+        // The same pass also fills the request's absent-leaf costs, which share every step but the
+        // value a leaf starts from: zero for a leaf the request holds, its weight otherwise.
+        Map<K, BigInteger> absent = new HashMap<>();
+        budget.absentCosts = absent;
+        Map<CompiledPattern<K>, Integer> unresolvedInputs = new IdentityHashMap<>(cone.patterns().size());
+        Map<CompiledPattern<K>, BigInteger[]> inputTotals = new IdentityHashMap<>(cone.patterns().size());
         Map<K, Integer> unresolvedProducers = new HashMap<>();
         Set<K> keys = new HashSet<>();
 
-        for (CompiledPattern<K> pattern : graph.compiledPatterns()) {
+        for (CompiledPattern<K> pattern : cone.patterns()) {
             budget.operation(0);
             unresolvedInputs.put(pattern, pattern.inputs().size());
-            inputTotals.put(pattern, BigInteger.ZERO);
+            inputTotals.put(pattern, new BigInteger[] {BigInteger.ZERO, BigInteger.ZERO});
             for (PatternEntry<K> input : pattern.inputs()) {
                 keys.add(input.key());
             }
@@ -263,8 +1012,13 @@ public final class IterativeCraftingPlanner<K> {
         Map<K, Long> weights = budget.request.missingWeights();
         for (K key : keys) {
             if (unresolvedProducers.getOrDefault(key, 0) == 0) {
-                costs.put(key, weights.isEmpty() ? BigInteger.ONE
-                        : BigInteger.valueOf(weights.getOrDefault(key, 1L)));
+                BigInteger weight = weights.isEmpty() ? BigInteger.ONE
+                        : BigInteger.valueOf(weights.getOrDefault(key, 1L));
+                costs.put(key, weight);
+                // Counting only leaves the request has none of gives the shortage a route would cause,
+                // which is what a route must be judged by first when some raw material is absent.
+                absent.put(key, budget.request.inventory().getOrDefault(key, UfoAmount.ZERO).isZero()
+                        ? weight : BigInteger.ZERO);
                 finalized.add(key);
             }
         }
@@ -272,39 +1026,39 @@ public final class IterativeCraftingPlanner<K> {
         while (!finalized.isEmpty()) {
             K key = finalized.removeFirst();
             BigInteger cost = costs.get(key);
-            for (CompiledPattern<K> pattern : graph.consumersOf(key)) {
+            BigInteger absentCost = absent.get(key);
+            for (Use<K> use : cone.usesOf(key)) {
+                CompiledPattern<K> pattern = use.pattern();
                 budget.operation(0);
-                BigInteger units = BigInteger.ZERO;
-                int matches = 0;
-                for (PatternEntry<K> input : pattern.inputs()) {
-                    if (input.key().equals(key)) {
-                        units = units.add(input.amount().asBigInteger());
-                        matches++;
-                    }
-                }
-                if (matches == 0) continue;
-                inputTotals.merge(pattern, cost.multiply(units), BigInteger::add);
-                if (unresolvedInputs.merge(pattern, -matches, Integer::sum) != 0) continue;
-                resolveLeafCost(pattern, costs, unresolvedProducers, inputTotals, finalized);
+                BigInteger units = use.entry().amount().asBigInteger();
+                BigInteger[] totals = inputTotals.get(pattern);
+                totals[0] = totals[0].add(cost.multiply(units));
+                totals[1] = totals[1].add(absentCost.multiply(units));
+                if (unresolvedInputs.merge(pattern, -1, Integer::sum) != 0) continue;
+                resolveLeafCost(pattern, costs, absent, unresolvedProducers, totals, finalized);
             }
         }
         return costs;
     }
 
-    private void resolveLeafCost(CompiledPattern<K> pattern, Map<K, BigInteger> costs,
-                                 Map<K, Integer> unresolvedProducers,
-                                 Map<CompiledPattern<K>, BigInteger> inputTotals,
+    private void resolveLeafCost(CompiledPattern<K> pattern, Map<K, BigInteger> costs, Map<K, BigInteger> absent,
+                                 Map<K, Integer> unresolvedProducers, BigInteger[] totals,
                                  ArrayDeque<K> finalized) {
-        BigInteger total = inputTotals.get(pattern);
         for (PatternEntry<K> output : pattern.outputs()) {
             K key = output.key();
-            BigInteger perUnit = ceilDiv(total, output.amount().asBigInteger());
+            BigInteger perUnit = ceilDiv(totals[0], output.amount().asBigInteger());
             BigInteger existing = costs.get(key);
             if (existing == null || perUnit.compareTo(existing) < 0) {
                 costs.put(key, perUnit);
             }
+            BigInteger absentPerUnit = ceilDiv(totals[1], output.amount().asBigInteger());
+            BigInteger existingAbsent = absent.get(key);
+            if (existingAbsent == null || absentPerUnit.compareTo(existingAbsent) < 0) {
+                absent.put(key, absentPerUnit);
+            }
             if (unresolvedProducers.merge(key, -1, Integer::sum) == 0) {
                 costs.putIfAbsent(key, BigInteger.ONE);
+                absent.putIfAbsent(key, BigInteger.ONE);
                 finalized.add(key);
             }
         }
@@ -315,9 +1069,15 @@ public final class IterativeCraftingPlanner<K> {
         return quotient[1].signum() == 0 ? quotient[0] : quotient[0].add(BigInteger.ONE);
     }
 
+    /**
+     * One pass over the demand. {@code preferences} pins keys to a route wherever that route is a
+     * candidate, and {@code decisions} collects every choice the pass made between routes; both are
+     * {@code null} when unused.
+     */
     private boolean search(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request, State state,
                             Map<K, Integer> ranks, Map<K, BigInteger> leafCosts, Budget budget,
-                            boolean simulate) {
+                            boolean simulate, Map<K, CraftingPattern<K>> preferences,
+                            List<Decision<K>> decisions) {
         Task<K> pending = new Task<>(request.target(), request.amount(), 1, null, null, null);
         ArrayDeque<Choice<K>> choices = new ArrayDeque<>();
         while (pending != null) {
@@ -343,6 +1103,7 @@ public final class IterativeCraftingPlanner<K> {
             if (options.isEmpty()) {
                 if (simulate) {
                     state.add(state.missing, task.key, required);
+                    state.deadEnds++;
                     continue;
                 }
                 boolean recovered = false;
@@ -360,6 +1121,12 @@ public final class IterativeCraftingPlanner<K> {
                 }
                 if (!recovered) return false;
                 continue;
+            }
+            if (preferences != null && options.size() > 1) {
+                options = pinned(options, preferences.get(task.key));
+            }
+            if (decisions != null && options.size() > 1) {
+                decisions.add(Decision.of(task.key, options));
             }
             if (!simulate && options.size() > 1) {
                 state.journaling = true;
@@ -555,6 +1322,7 @@ public final class IterativeCraftingPlanner<K> {
             BigInteger weighted = weights.isEmpty() ? null : BigInteger.ZERO;
             BigInteger inputCost = BigInteger.ZERO;
             BigInteger leafCost = BigInteger.ZERO;
+            BigInteger absentCost = BigInteger.ZERO;
             boolean leafKnown = true;
             int rank = 0;
             boolean cycle = false;
@@ -563,7 +1331,7 @@ public final class IterativeCraftingPlanner<K> {
                 // A fuzzy slot is satisfied by any variant it accepts, so presence is their total.
                 UfoAmount available = input.reusable() && !input.variants().isEmpty()
                         ? state.availableAcross(input.variants())
-                        : state.available(input.key());
+                        : state.free(input.key());
                 // A catalyst is required once and handed back; a durable carrier is consumed but one
                 // unit survives several firings, so neither scales with the run count the way an
                 // ordinary input does.
@@ -602,23 +1370,30 @@ public final class IterativeCraftingPlanner<K> {
                 inputCost = inputCost.add(needed.asBigInteger());
                 rank = Math.max(rank, ranks.getOrDefault(input.key(), Integer.MAX_VALUE));
                 BigInteger inputLeaf = leafCosts.get(input.key());
+                BigInteger inputAbsent = budget.absentCosts.get(input.key());
                 if (inputLeaf == null) {
                     leafKnown = false;
                 } else {
                     // Per execution, so routes with different yields stay comparable.
                     leafCost = leafCost.add(inputLeaf.multiply(input.amount().asBigInteger()));
+                    if (absentCost != null && inputAbsent != null) {
+                        absentCost = absentCost.add(inputAbsent.multiply(input.amount().asBigInteger()));
+                    } else {
+                        absentCost = null;
+                    }
                 }
             }
             if (cycle) continue;
             BigInteger routeLeafCost = leafKnown ? leafCost : null;
+            BigInteger routeAbsentCost = leafKnown ? absentCost : null;
             // The same slot carries whichever shortage measure the request asked for: units when
             // nothing was weighted, weighted units when something was. It is one field either way, so
             // a request without weights allocates exactly what it allocated before.
             BigInteger ranking = weighted == null ? deficit : weighted;
-            options.add(new Candidate<>(pattern, runs, ranking, inputCost, rank, routeLeafCost));
+            options.add(new Candidate<>(pattern, runs, ranking, inputCost, rank, routeLeafCost, routeAbsentCost));
             if (!capacity.isZero() && capacity.compareTo(runs) < 0) {
                 options.add(new Candidate<>(pattern, capacity, BigInteger.ZERO, inputCost, rank,
-                        routeLeafCost));
+                        routeLeafCost, routeAbsentCost));
             }
         }
         for (int i = 0; i < options.size(); i++) budget.operation(0);
@@ -629,6 +1404,8 @@ public final class IterativeCraftingPlanner<K> {
                 // it an identifier chose, and a correct plan could still ask for several times the
                 // material the case needs.
                 .thenComparing(option -> option.leafCost == null)
+                // Leaves the request has none of come first: they are the shortage the route causes.
+                .thenComparing(option -> option.absentCost, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(option -> option.leafCost, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparingInt(option -> option.rank)
                 .thenComparing(option -> option.deficit)
@@ -669,7 +1446,21 @@ public final class IterativeCraftingPlanner<K> {
     }
 
     private record Candidate<K>(CompiledPattern<K> pattern, UfoAmount runs, BigInteger deficit,
-                                 BigInteger cost, int rank, BigInteger leafCost) {}
+                                 BigInteger cost, int rank, BigInteger leafCost, BigInteger absentCost) {}
+    /** A choice between routes one pass made: the key, the route taken and every route offered. */
+    private record Decision<K>(K key, CraftingPattern<K> chosen, List<CraftingPattern<K>> routes) {
+        static <K> Decision<K> of(K key, List<Candidate<K>> options) {
+            ArrayList<CraftingPattern<K>> routes = new ArrayList<>(options.size());
+            for (Candidate<K> option : options) {
+                CraftingPattern<K> route = option.pattern.pattern();
+                if (!routes.contains(route)) routes.add(route);
+            }
+            return new Decision<>(key, options.getFirst().pattern.pattern(), routes);
+        }
+    }
+    /** Route pins to try, the shortfall of the run they came from, and insertion order for ties. */
+    private record Variant<K>(Map<K, CraftingPattern<K>> preferences, int pins, BigInteger parentShortfall,
+                              long sequence) {}
     private record Task<K>(K key, UfoAmount amount, int depth, CompiledPattern<K> pattern,
                            UfoAmount runs, Task<K> next) {}
     private static final class Choice<K> {
@@ -701,6 +1492,11 @@ public final class IterativeCraftingPlanner<K> {
          * Nothing allocates it on the common single-route path.
          */
         long[] choiceLinks;
+        /** Per-unit leaf demand counting only leaves the request has none of; empty without a choice. */
+        Map<K, BigInteger> absentCosts = Map.of();
+        /** Operation count and clock reading at which the exact search gives way; unset is MAX_VALUE. */
+        long softOperations = Long.MAX_VALUE;
+        long softDeadline = Long.MAX_VALUE;
         Budget(PlanningRequest<K> request, long started) {
             this.request = request; this.started = started;
             long nanos;
@@ -714,14 +1510,32 @@ public final class IterativeCraftingPlanner<K> {
             if (operations >= request.limits().maxOperations()) {
                 throw new PlanningHalt(PlanningResult.Status.OPERATION_LIMIT);
             }
+            if (operations >= softOperations) throw new SoftLimitReached();
             if (++operations % request.limits().checkpointInterval() == 0) check();
         }
         void check() {
             if (request.cancellation().isCancelled() || Thread.currentThread().isInterrupted()) {
                 throw new PlanningHalt(PlanningResult.Status.CANCELLED);
             }
-            if (nanoTime.getAsLong() - started >= timeout) throw new PlanningHalt(PlanningResult.Status.TIMED_OUT);
+            long elapsed = nanoTime.getAsLong() - started;
+            if (elapsed >= timeout) throw new PlanningHalt(PlanningResult.Status.TIMED_OUT);
+            if (elapsed >= softDeadline) throw new SoftLimitReached();
         }
+        /** Allows the exact search {@code 1/divisor} of what is left of each hard limit, and at most {@code allowance} operations. */
+        void beginSoftLimit(int divisor, long allowance) {
+            long elapsed = Math.max(0L, nanoTime.getAsLong() - started);
+            softOperations = operations + Math.max(1L, Math.min(allowance,
+                    (request.limits().maxOperations() - operations) / divisor));
+            softDeadline = elapsed + Math.max(1L, (timeout - elapsed) / divisor);
+        }
+        void endSoftLimit() {
+            softOperations = Long.MAX_VALUE;
+            softDeadline = Long.MAX_VALUE;
+        }
+    }
+    private static final class SoftLimitReached extends RuntimeException {
+        @Serial private static final long serialVersionUID = 1L;
+        SoftLimitReached() { super(null, null, false, false); }
     }
     private static final class PlanningHalt extends RuntimeException {
         @Serial private static final long serialVersionUID = 1L;
@@ -729,8 +1543,12 @@ public final class IterativeCraftingPlanner<K> {
         PlanningHalt(PlanningResult.Status status) { super(null, null, false, false); this.status = status; }
     }
 
+    private static final Comparator<CraftingPattern<?>> BY_ID = Comparator.comparing(CraftingPattern::id);
+
     private final class State {
         final Comparator<? super K> keys;
+        final Map<K, UfoAmount> inventory;
+        /** Stock left of each key this plan has drawn from; a key it never touched reads the inventory. */
         final Map<K, UfoAmount> stock;
         final Map<K, UfoAmount> crafted;
         final Map<K, UfoAmount> extracted;
@@ -750,19 +1568,67 @@ public final class IterativeCraftingPlanner<K> {
          * separately, or it charges for a tool that the schedule never consumes.
          */
         Map<DurableGroup<K>, UfoAmount> firings;
-        final Map<CraftingPattern<K>, UfoAmount> executions = new TreeMap<>(Comparator.comparing(CraftingPattern::id));
+        /** Graph instances, so identity is equality; sorted by id only when the plan is frozen. */
+        final Map<CraftingPattern<K>, UfoAmount> executions = new IdentityHashMap<>(8);
         final Set<K> active = new HashSet<>();
         final ArrayList<CraftingPlan.Execution<K>> schedule = new ArrayList<>();
         final ArrayList<Runnable> journal = new ArrayList<>();
         boolean journaling;
+        /** Keys a simulated pass had to leave missing because no route was left for them. */
+        int deadEnds;
+        /**
+         * Demand the aggregated pass has placed on keys it has not planned yet, or {@code null} outside
+         * that pass. Those units are spoken for, so a route choice must not count them as available.
+         */
+        Map<K, UfoAmount> pending;
         State(ImmutableCraftingGraph<K> graph, PlanningRequest<K> request) {
             this.graph = graph;
             keys = graph.keyComparator();
-            stock = new TreeMap<>(keys); stock.putAll(request.inventory());
-            crafted = new TreeMap<>(keys); extracted = new TreeMap<>(keys); missing = new TreeMap<>(keys);
+            // Hash maps while planning, sorted once when the plan is frozen: these are read and written on
+            // every step, and the comparator was the hottest frame of a large plan. Stock is an overlay
+            // on the request's inventory, which is a whole network's contents in production and was
+            // copied for every state the planner made.
+            inventory = request.inventory();
+            stock = new HashMap<>();
+            crafted = new HashMap<>(); extracted = new HashMap<>(); missing = new HashMap<>();
+        }
+        /** Total missing amount, the measure the discrepancy search ranks its variants by. */
+        BigInteger shortfall() {
+            BigInteger total = BigInteger.ZERO;
+            for (UfoAmount amount : missing.values()) total = total.add(amount.asBigInteger());
+            return total;
         }
         UfoAmount available(K key) {
-            return stock.getOrDefault(key, UfoAmount.ZERO).add(crafted.getOrDefault(key, UfoAmount.ZERO));
+            return stored(key).add(crafted.getOrDefault(key, UfoAmount.ZERO));
+        }
+        UfoAmount stored(K key) {
+            UfoAmount left = stock.get(key);
+            return left != null ? left : inventory.getOrDefault(key, UfoAmount.ZERO);
+        }
+        /** Records stock left of a key, zero included: an absent entry would read the inventory again. */
+        void setStock(K key, UfoAmount amount) {
+            UfoAmount previous = stock.put(key, amount);
+            if (journaling) journal.add(() -> { if (previous == null) stock.remove(key); else stock.put(key, previous); });
+        }
+        /** Available units not already claimed by demand the aggregated pass has still to plan. */
+        UfoAmount free(K key) {
+            UfoAmount available = available(key);
+            if (pending == null) return available;
+            UfoAmount claimed = pending.get(key);
+            return claimed == null ? available : available.subtractClamped(claimed);
+        }
+        /** Missing amount weighted by the request's missing weights, the measure answers are ranked by. */
+        BigInteger weightedShortfall(PlanningRequest<K> request) {
+            BigInteger total = BigInteger.ZERO;
+            for (Map.Entry<K, UfoAmount> entry : missing.entrySet()) {
+                total = total.add(entry.getValue().asBigInteger().multiply(BigInteger.valueOf(request.weightOf(entry.getKey()))));
+            }
+            return total;
+        }
+        BigInteger totalExecutions() {
+            BigInteger total = BigInteger.ZERO;
+            for (UfoAmount runs : executions.values()) total = total.add(runs.asBigInteger());
+            return total;
         }
         /** How much of {@code key} is missing for it to be present at all. Consumes nothing. */
         UfoAmount requirePresent(K key, UfoAmount amount) {
@@ -791,10 +1657,10 @@ public final class IterativeCraftingPlanner<K> {
             UfoAmount taken = surplus.min(amount);
             if (!taken.isZero()) put(crafted, key, surplus.subtract(taken));
             UfoAmount rest = amount.subtract(taken);
-            UfoAmount stored = stock.getOrDefault(key, UfoAmount.ZERO);
+            UfoAmount stored = stored(key);
             taken = stored.min(rest);
             if (!taken.isZero()) {
-                put(stock, key, stored.subtract(taken));
+                setStock(key, stored.subtract(taken));
                 add(extracted, key, taken);
             }
             return rest.subtract(taken);
@@ -818,14 +1684,28 @@ public final class IterativeCraftingPlanner<K> {
         }
         CraftingPlan<K> freeze(K target, UfoAmount requested) {
             TreeMap<K, UfoAmount> remaining = new TreeMap<>(keys);
-            remaining.putAll(stock);
+            inventory.forEach((key, amount) -> {
+                UfoAmount left = stock.getOrDefault(key, amount);
+                if (!left.isZero()) remaining.put(key, left);
+            });
             crafted.forEach((key, amount) -> remaining.merge(key, amount, UfoAmount::add));
             UfoAmount runs = executions.values().stream().reduce(UfoAmount.ZERO, UfoAmount::add);
             UfoAmount shortfall = missing.values().stream().reduce(UfoAmount.ZERO, UfoAmount::add);
             UfoAmount surplus = crafted.values().stream().reduce(UfoAmount.ZERO, UfoAmount::add);
-            return new CraftingPlan<>(target, requested, executions, extracted, missing, remaining, schedule,
-                    new CraftingPlan.PlanQuality(missing.isEmpty(), executions.size(), runs, shortfall, surplus),
-                    splitShortage(missing));
+            Map<K, UfoAmount> sortedExtracted = sorted(extracted, keys);
+            Map<K, UfoAmount> sortedMissing = sorted(missing, keys);
+            Map<CraftingPattern<K>, UfoAmount> sortedExecutions = sorted(executions, BY_ID);
+            return new CraftingPlan<>(target, requested, sortedExecutions, sortedExtracted, sortedMissing, remaining,
+                    schedule, new CraftingPlan.PlanQuality(missing.isEmpty(), executions.size(), runs, shortfall,
+                    surplus), splitShortage(sortedMissing));
+        }
+
+        /** A map of at most one entry is already in order, so only a larger one pays for a sorted copy. */
+        private static <T> Map<T, UfoAmount> sorted(Map<T, UfoAmount> map, Comparator<? super T> order) {
+            if (map.size() <= 1) return map;
+            TreeMap<T, UfoAmount> copy = new TreeMap<>(order);
+            copy.putAll(map);
+            return copy;
         }
 
         /**
