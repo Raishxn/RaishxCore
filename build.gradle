@@ -177,6 +177,33 @@ tasks.register('plannerCapabilityMatrix', JavaExec) {
     jvmArgs '-Xms256m', '-Xmx1g'
 }
 
+// Head-to-head benchmark against the Thunderbolt 1.0.6 CraftPlannerV2 that AE2 add-ons shipped.
+// Only the pure planner package is synced out of a local reference copy into build/, and only the
+// headToHead source set sees it: nothing from Thunderbolt is compiled into or shipped with RaishxCore.
+def thunderbolt106Root = providers.gradleProperty('thunderbolt106Classes')
+        .map { file(it) }
+        .getOrElse(file('../references/thunderbolt-1.0.6'))
+def thunderbolt106Planner = tasks.register('thunderbolt106PlannerClasses', Sync) {
+    group = 'verification'
+    from(thunderbolt106Root) { include 'com/moakiee/thunderbolt/core/planner/**' }
+    into layout.buildDirectory.dir('classes/thunderbolt106')
+}
+sourceSets {
+    headToHead {
+        compileClasspath += sourceSets.test.output + sourceSets.main.output + sourceSets.main.compileClasspath + files(thunderbolt106Planner)
+        runtimeClasspath += sourceSets.test.output + sourceSets.main.output + sourceSets.test.runtimeClasspath + files(thunderbolt106Planner)
+    }
+}
+
+tasks.register('plannerHeadToHead', JavaExec) {
+    group = 'verification'
+    description = 'Times RaishxCore plan/planFast against Thunderbolt 1.0.6 CraftPlannerV2 on shared scenarios.'
+    classpath = sourceSets.headToHead.runtimeClasspath
+    mainClass = 'com.raishxn.ufocore.headtohead.PlannerHeadToHead'
+    args layout.buildDirectory.dir('reports/planner').get().asFile.absolutePath
+    jvmArgs '-Xms1g', '-Xmx4g', '-XX:+UseParallelGC'
+}
+
 // Capture slice harness: drives the production capture machine in bounded slices, gates the
 // deterministic slicing invariants and reports the measured slice p50/p95/p99 per grid and per tick.
 tasks.register('plannerCaptureSlices', JavaExec) {
