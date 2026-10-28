@@ -46,6 +46,12 @@ public abstract class CoreCraftingPlannerServiceMixin implements PlannerGridServ
             return;
         }
         if (raishxcore$planner == null) raishxcore$planner = new Ae2PlannerBridge();
+        if (raishxcore$hasThirdPartyPlannerCpu()) {
+            // AE2 Lightning Tech's Tianshu CPUs plan through AE2 and Thunderbolt, and key their own
+            // report screen on that plan. Taking the request over would hide it, so step aside.
+            raishxcore$planner.recordDisabled();
+            return;
+        }
         var revisions = (PlannerRevisionSource) craftingProviders;
         Future<ICraftingPlan> result = raishxcore$planner.begin(new Ae2PlannerBridge.BeginRequest(
                 level, grid, requester, target, amount, strategy,
@@ -53,6 +59,15 @@ public abstract class CoreCraftingPlannerServiceMixin implements PlannerGridServ
                 revisions::raishxcore$getPatternRevision,
                 () -> raishxcore$planWithVanillaAe2(level, requester, target, amount, strategy)));
         if (result != null) cir.setReturnValue(result);
+    }
+
+    /** True when the grid holds a crafting CPU from AE2 Lightning Tech (Tianshu / TimeWheel). */
+    @Unique
+    private boolean raishxcore$hasThirdPartyPlannerCpu() {
+        for (var cpu : ((CraftingService) (Object) this).getCpus()) {
+            if (cpu.getClass().getName().startsWith("com.moakiee.ae2lt.")) return true;
+        }
+        return false;
     }
 
     /**

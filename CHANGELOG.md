@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-10-28
+
+### Fixed
+
+- AE2 Lightning Tech's planner report screen is back on networks with a Tianshu / TimeWheel CPU.
+  RaishxCore took every crafting calculation over and returned a plain AE2 plan without the
+  Thunderbolt engine marker, so AE2LT fell back to the vanilla confirm screen. The planner now
+  steps aside on any grid that holds an AE2LT crafting CPU and leaves the request to AE2 and
+  Thunderbolt; other networks keep the RaishxCore planner.
+
 ## 0.2.2 - 2026-10-18
 
 ### Fixed
